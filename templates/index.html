@@ -135,6 +135,21 @@
         #fsBtn.fs-on  { background: rgba(200,60,30,0.55); border-color: rgba(255,140,110,0.75); color: white; }
         #fsBtn.fs-on:active { background: rgba(255,100,60,0.80); transform: scale(0.88); }
         @media (max-width: 860px) { #fsBtn { display: block; } }
+
+        /* ===== 橫屏側邊控制 canvas（直屏隱藏）===== */
+        #shootCvs, #dpadCvs {
+            display: none;
+            position: fixed;
+            bottom: 46px;
+            z-index: 200;
+            touch-action: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #shootCvs { left: 6px; }
+        #dpadCvs  { right: 6px; }
+        @media (max-width: 860px) and (orientation: landscape) {
+            #shootCvs, #dpadCvs { display: block; }
+        }
     </style>
 </head>
 <body>
@@ -155,7 +170,8 @@
         <div id="credit">Deployed by <span>Kyle Cheng</span></div>
     </div>
     <button id="fsBtn" title="全螢幕">⛶</button>
-
+    <canvas id="shootCvs" width="110" height="110"></canvas>
+    <canvas id="dpadCvs"  width="150" height="150"></canvas>
 
     <script>
     // =====================================================
@@ -1314,6 +1330,84 @@
     }
 
     // =====================================================
+    //   橫屏側邊控制 canvas（射門左下 / 方向鍵右下）
+    // =====================================================
+    const shootCvs = document.getElementById('shootCvs');
+    const dpadCvs  = document.getElementById('dpadCvs');
+    const sctx = shootCvs.getContext('2d');
+    const dctx = dpadCvs.getContext('2d');
+
+    function isLandscapeMobile() {
+        return window.innerWidth > window.innerHeight && window.innerWidth < 1100;
+    }
+
+    // drawTriangle 只用 main ctx；這裡提供帶 ctx 參數版給側邊 canvas 用
+    function drawTriangleEx(c, x, y, dir, size, color) {
+        c.beginPath();
+        switch (dir) {
+            case 'up':    c.moveTo(x, y-size); c.lineTo(x+size*0.78, y+size*0.52); c.lineTo(x-size*0.78, y+size*0.52); break;
+            case 'down':  c.moveTo(x, y+size); c.lineTo(x+size*0.78, y-size*0.52); c.lineTo(x-size*0.78, y-size*0.52); break;
+            case 'left':  c.moveTo(x-size, y); c.lineTo(x+size*0.52, y-size*0.78); c.lineTo(x+size*0.52, y+size*0.78); break;
+            case 'right': c.moveTo(x+size, y); c.lineTo(x-size*0.52, y-size*0.78); c.lineTo(x-size*0.52, y+size*0.78); break;
+        }
+        c.closePath(); c.fillStyle = color; c.fill();
+    }
+
+    function drawShootCvs() {
+        const W = shootCvs.width, H = shootCvs.height;
+        sctx.clearRect(0, 0, W, H);
+        const r = W * 0.44;
+        sctx.beginPath(); sctx.arc(W/2, H/2, r, 0, Math.PI*2);
+        sctx.fillStyle = shootBtn.pressed ? 'rgba(255,68,28,0.88)' : 'rgba(195,42,18,0.45)';
+        sctx.fill();
+        sctx.strokeStyle = shootBtn.pressed ? 'rgba(255,158,130,0.95)' : 'rgba(255,98,72,0.52)';
+        sctx.lineWidth = 2.5; sctx.stroke();
+        sctx.font = `bold ${shootBtn.pressed ? 16 : 14}px Arial`;
+        sctx.textAlign = 'center'; sctx.textBaseline = 'middle';
+        sctx.fillStyle = shootBtn.pressed ? 'white' : 'rgba(255,208,198,0.80)';
+        sctx.fillText('射門', W/2, H/2);
+        sctx.textBaseline = 'alphabetic';
+    }
+
+    function drawDpadCvs() {
+        const W = dpadCvs.width, H = dpadCvs.height;
+        const cx = W/2, cy = H/2, R = Math.min(W,H) * 0.44;
+        dctx.clearRect(0, 0, W, H);
+        dctx.beginPath(); dctx.arc(cx, cy, R, 0, Math.PI*2);
+        dctx.fillStyle = 'rgba(26,50,105,0.50)'; dctx.fill();
+        dctx.strokeStyle = 'rgba(72,122,205,0.52)'; dctx.lineWidth = 1.5; dctx.stroke();
+        dctx.strokeStyle = 'rgba(95,148,218,0.20)'; dctx.lineWidth = 1;
+        dctx.beginPath();
+        dctx.moveTo(cx-R, cy); dctx.lineTo(cx+R, cy);
+        dctx.moveTo(cx, cy-R); dctx.lineTo(cx, cy+R);
+        dctx.stroke();
+        const ad = R * 0.58, triSz = Math.max(6, Math.round(R * 0.19));
+        [[cx, cy-ad,'up',dpadState.up],[cx,cy+ad,'down',dpadState.down],
+         [cx-ad,cy,'left',dpadState.left],[cx+ad,cy,'right',dpadState.right]
+        ].forEach(([ax,ay,dir,act]) => {
+            drawTriangleEx(dctx, ax, ay, dir, triSz, act ? 'rgba(255,65,40,0.95)' : 'rgba(155,198,255,0.38)');
+        });
+        dctx.beginPath(); dctx.arc(cx, cy, R*0.18, 0, Math.PI*2);
+        dctx.fillStyle = 'rgba(55,98,168,0.42)'; dctx.fill();
+    }
+
+    /** 依觸碰螢幕座標更新 dpadState（給側邊 d-pad canvas 用）*/
+    function updateExtDpadDir(clientX, clientY) {
+        const rect = dpadCvs.getBoundingClientRect();
+        const dx = clientX - (rect.left + rect.width  / 2);
+        const dy = clientY - (rect.top  + rect.height / 2);
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        const dead = rect.width * 0.18;
+        dpadState.up = dpadState.down = dpadState.left = dpadState.right = false;
+        if (dist < dead) return;
+        const adx = Math.abs(dx), ady = Math.abs(dy);
+        if (dx > 0 && adx > ady*0.38) dpadState.right = true;
+        if (dx < 0 && adx > ady*0.38) dpadState.left  = true;
+        if (dy < 0 && ady > adx*0.38) dpadState.up    = true;
+        if (dy > 0 && ady > adx*0.38) dpadState.down  = true;
+    }
+
+    // =====================================================
     //   主繪圖函式
     // =====================================================
     function draw() {
@@ -1324,7 +1418,8 @@
         drawActor(computer, 'AI');  // 電腦先畫（玩家在上層）
         drawActor(player, 'P1');
         drawTackleIndicator();      // 搶球倒數進度圈（在球員上層）
-        if (phase === 'playing') drawMobileControls(); // 觸控控制介面
+        if (phase === 'playing' && !isLandscapeMobile()) drawMobileControls();
+        if (isLandscapeMobile()) { drawShootCvs(); drawDpadCvs(); } // 橫屏側邊控制
         drawHUD();
 
         // 各狀態的覆蓋層
@@ -1439,19 +1534,20 @@
             // 暫停中：點非選單區繼續遊戲
             if (phase === 'paused') { phase = 'playing'; return; }
 
-            // 射門按鈕（左下）
-            const sdx = p.x - shootBtn.x, sdy = p.y - shootBtn.y;
-            if (sdx*sdx + sdy*sdy < shootBtn.radius * shootBtn.radius) {
-                shootBtn.pressed = true; shootBtn.touchId = t.identifier;
-                if (player.hasBall && phase === 'playing') doPlayerShoot();
-                return;
-            }
-
-            // 圓形方向鍵（右下）
-            const cdx = p.x - cdpad.cx, cdy = p.y - cdpad.cy;
-            if (cdx*cdx + cdy*cdy < cdpad.R * cdpad.R && !cdpad.active) {
-                cdpad.active = true; cdpad.touchId = t.identifier;
-                updateCdpadDir(p.x, p.y);
+            if (!isLandscapeMobile()) {
+                // 射門按鈕（左下，直屏時才在主 canvas 偵測）
+                const sdx = p.x - shootBtn.x, sdy = p.y - shootBtn.y;
+                if (sdx*sdx + sdy*sdy < shootBtn.radius * shootBtn.radius) {
+                    shootBtn.pressed = true; shootBtn.touchId = t.identifier;
+                    if (player.hasBall && phase === 'playing') doPlayerShoot();
+                    return;
+                }
+                // 圓形方向鍵（右下，直屏時才在主 canvas 偵測）
+                const cdx = p.x - cdpad.cx, cdy = p.y - cdpad.cy;
+                if (cdx*cdx + cdy*cdy < cdpad.R * cdpad.R && !cdpad.active) {
+                    cdpad.active = true; cdpad.touchId = t.identifier;
+                    updateCdpadDir(p.x, p.y);
+                }
             }
         });
     }, { passive: false });
@@ -1485,20 +1581,47 @@
     }, { passive: false });
 
     // =====================================================
-    //   控制按鈕位置（橫屏 ↔ 直屏 動態切換）
-    //   橫屏：射門鈕在球場左側邊距，方向鍵在右側邊距，不遮擋球場
-    //   直屏：維持原本底部左右角
+    //   側邊控制 canvas 觸控事件（橫屏專用）
     // =====================================================
-    function updateControlLayout() {
-        const ls = window.innerWidth > window.innerHeight && window.innerWidth < 1100;
-        if (ls) {
-            shootBtn.x = 35;        shootBtn.y = FIELD.centerY; shootBtn.radius = 40;
-            cdpad.cx   = CW - 35;   cdpad.cy   = FIELD.centerY; cdpad.R = 40; cdpad.DEAD = 9;
-        } else {
-            shootBtn.x = 80;        shootBtn.y = CH - 82;       shootBtn.radius = 50;
-            cdpad.cx   = CW - 88;   cdpad.cy   = CH - 82;       cdpad.R = 62; cdpad.DEAD = 14;
-        }
-    }
+    shootCvs.addEventListener('touchstart', e => {
+        e.preventDefault();
+        if (phase === 'gameover') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; initPositions(); return; }
+        if (phase === 'start')    { phase='playing'; gameFrames=0; return; }
+        if (phase === 'paused')   { phase='playing'; return; }
+        shootBtn.pressed = true;
+        if (player.hasBall && phase === 'playing') doPlayerShoot();
+    }, { passive: false });
+    shootCvs.addEventListener('touchend',    () => { shootBtn.pressed = false; }, { passive: false });
+    shootCvs.addEventListener('touchcancel', () => { shootBtn.pressed = false; }, { passive: false });
+
+    let extDpadTouchId = null;
+    dpadCvs.addEventListener('touchstart', e => {
+        e.preventDefault();
+        if (phase === 'gameover') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; initPositions(); return; }
+        if (phase === 'start')    { phase='playing'; gameFrames=0; return; }
+        if (phase === 'paused')   { phase='playing'; return; }
+        const t = e.changedTouches[0];
+        if (extDpadTouchId === null) { extDpadTouchId = t.identifier; updateExtDpadDir(t.clientX, t.clientY); }
+    }, { passive: false });
+    dpadCvs.addEventListener('touchmove', e => {
+        e.preventDefault();
+        Array.from(e.changedTouches).forEach(t => {
+            if (t.identifier === extDpadTouchId) updateExtDpadDir(t.clientX, t.clientY);
+        });
+    }, { passive: false });
+    dpadCvs.addEventListener('touchend', e => {
+        e.preventDefault();
+        Array.from(e.changedTouches).forEach(t => {
+            if (t.identifier === extDpadTouchId) {
+                extDpadTouchId = null;
+                dpadState.up = dpadState.down = dpadState.left = dpadState.right = false;
+            }
+        });
+    }, { passive: false });
+    dpadCvs.addEventListener('touchcancel', () => {
+        extDpadTouchId = null;
+        dpadState.up = dpadState.down = dpadState.left = dpadState.right = false;
+    }, { passive: false });
 
     // =====================================================
     //   全螢幕控制
@@ -1511,8 +1634,19 @@
             (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
         }
     }
+
     const fsBtn = document.getElementById('fsBtn');
-    fsBtn.addEventListener('click', toggleFullscreen);
+
+    // iOS Safari 不支援 requestFullscreen API，隱藏按鈕避免誤導
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (isIOS) {
+        fsBtn.style.display = 'none';
+    } else {
+        // Chrome Android 需要同時掛 click 與 touchend 才穩定觸發
+        fsBtn.addEventListener('click', toggleFullscreen);
+        fsBtn.addEventListener('touchend', e => { e.preventDefault(); toggleFullscreen(); }, { passive: false });
+    }
 
     // 全螢幕狀態同步按鈕樣式
     function onFsChange() {
@@ -1524,19 +1658,16 @@
     document.addEventListener('fullscreenchange',       onFsChange);
     document.addEventListener('webkitfullscreenchange', onFsChange);
 
-    // 橫屏時自動嘗試全螢幕 + 更新按鈕位置
+    // 橫屏時自動嘗試全螢幕（Android Chrome；iOS 由瀏覽器自動處理）
     window.addEventListener('orientationchange', () => {
         setTimeout(() => {
-            updateControlLayout();
-            if (window.innerWidth > window.innerHeight && !document.fullscreenElement) {
+            if (!isIOS && window.innerWidth > window.innerHeight && !document.fullscreenElement) {
                 document.documentElement.requestFullscreen?.().catch(() => {});
             }
         }, 400);
     });
-    window.addEventListener('resize', updateControlLayout);
 
     initPositions();
-    updateControlLayout();
     gameLoop();
     </script>
 </body>
