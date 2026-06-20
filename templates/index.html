@@ -1027,9 +1027,9 @@
     //   觸控輸入（手機 / 平板）
     // =====================================================
 
-    // 射門按鈕（右下角固定）
+    // 射門按鈕（左下角固定：左手射門，右手搖桿）
     const shootBtnTouch = {
-        x: CW - 82, y: CH - 88,
+        x: 82, y: CH - 88,
         radius: 58,
         pressed: false,
         touchId: null,
@@ -1046,10 +1046,22 @@
 
     canvas.addEventListener('touchstart', e => {
         e.preventDefault();
+
+        // 開始選單：任何觸碰都開始遊戲
+        if (phase === 'start') {
+            phase = 'playing';
+            return;
+        }
+        // 暫停中：任何觸碰繼續遊戲
+        if (phase === 'paused') {
+            phase = 'playing';
+            return;
+        }
+
         Array.from(e.changedTouches).forEach(t => {
             const pos = getTouchPos(t);
 
-            // 優先判斷：是否點到右下角射門按鈕
+            // 優先判斷：是否點到左下角射門按鈕
             const bdx = pos.x - shootBtnTouch.x;
             const bdy = pos.y - shootBtnTouch.y;
             if (bdx*bdx + bdy*bdy < shootBtnTouch.radius * shootBtnTouch.radius) {
@@ -1149,8 +1161,8 @@
             ctx.stroke();
 
         } else {
-            // 未觸碰：左下角顯示半透明提示圈
-            const hx = 88, hy = CH - 92;
+            // 未觸碰：右下角顯示半透明提示圈（提示右手滑動區域）
+            const hx = CW - 90, hy = CH - 92;
             ctx.beginPath();
             ctx.arc(hx, hy, joyState.MAX_R, 0, Math.PI * 2);
             ctx.strokeStyle = 'rgba(255,255,255,0.10)';
@@ -1167,7 +1179,7 @@
             ctx.fillText('移動', hx, hy + 4);
         }
 
-        // ── 射門按鈕（右下角固定，始終可見）────────────
+        // ── 射門按鈕（左下角固定，始終可見）────────────
         const sb = shootBtnTouch;
         ctx.beginPath();
         ctx.arc(sb.x, sb.y, sb.radius, 0, Math.PI * 2);
