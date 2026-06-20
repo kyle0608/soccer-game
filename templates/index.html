@@ -111,6 +111,24 @@
             .diff-btn  { padding: 4px 14px; font-size: 13px; }
             #pauseBtn  { padding: 4px 12px; font-size: 13px; }
         }
+
+        /* ===== 全螢幕按鈕（僅手機顯示）===== */
+        #fsBtn {
+            display: none;
+            position: fixed;
+            top: 6px; right: 6px;
+            z-index: 300;
+            background: rgba(0,0,0,0.52);
+            color: rgba(255,255,255,0.82);
+            border: 1.5px solid rgba(255,255,255,0.35);
+            border-radius: 6px;
+            padding: 5px 10px;
+            font-size: 17px;
+            cursor: pointer;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        @media (max-width: 860px) { #fsBtn { display: block; } }
     </style>
 </head>
 <body>
@@ -129,6 +147,7 @@
         <div id="controls">⬆⬇⬅➡ 移動 &nbsp;|&nbsp; 雙擊加速 &nbsp;|&nbsp; Space 射門 &nbsp;|&nbsp; ESC 暫停/繼續 &nbsp;|&nbsp; Q 返回選單</div>
         <div id="credit">Deployed by <span>Kyle Cheng</span></div>
     </div>
+    <button id="fsBtn" title="全螢幕">⛶</button>
 
 
     <script>
@@ -255,8 +274,8 @@
 
     // 遊戲計時
     const GAME_SECONDS = 60;
-    let gameFrames = 0;      // 本局已計幀數
-    let cdpadHoldFrames = 0; // 連續持壓方向鍵幀數（用於加速）
+    let gameFrames = 0;        // 本局已計幀數
+    let playerHoldFrames = 0;  // 連續持壓方向幀數（鍵盤 + D-pad 通用，用於加速）
 
     // =====================================================
     //   鍵盤
@@ -363,6 +382,7 @@
             hasBall: false, sprintFrames: 0,
             facingX: 1, facingY: 0,
             color: '#3399ff',
+            walkFrame: 0,
         };
 
         computer = {
@@ -373,6 +393,7 @@
             sprintCooldown: ds.coolMin + Math.floor(Math.random() * (ds.coolMax - ds.coolMin)),
             facingX: -1, facingY: 0,
             color: '#ff4455',
+            walkFrame: 0,
         };
 
         stealCooldown = 0;
@@ -407,17 +428,19 @@
         const inputMag = Math.sqrt(dx * dx + dy * dy);
         if (inputMag > 1) { dx /= inputMag; dy /= inputMag; }
 
-        // ── 衝刺計算 ─────────────────────────────────
-        if (player.sprintFrames > 0) player.sprintFrames--;
-
-        // ── D-pad 長壓加速（持壓 1.5 秒後觸頂 +50%）────
-        if (cdpad.active) {
-            cdpadHoldFrames = Math.min(cdpadHoldFrames + 1, 90);
+        // ── 長壓加速（鍵盤 / D-pad 通用，最高 200%）────
+        if (inputMag > 0.05) {
+            playerHoldFrames = Math.min(playerHoldFrames + 1, 120);
         } else {
-            cdpadHoldFrames = 0;
+            playerHoldFrames = Math.max(playerHoldFrames - 4, 0); // 停止後快速衰減
         }
-        const dpadBoost = cdpad.active ? (1 + 0.5 * Math.min(cdpadHoldFrames / 90, 1)) : 1;
-        const spd = player.sprintFrames > 0 ? P_SPRINT : P_SPEED * dpadBoost;
+        // 雙擊衝刺：立即跳至最大速度
+        if (player.sprintFrames > 0) {
+            playerHoldFrames = 120;
+            player.sprintFrames--;
+        }
+        const holdRatio = Math.min(playerHoldFrames / 120, 1);
+        const spd = P_SPEED * (1 + holdRatio); // 3.2 px/frame → 6.4 px/frame
 
         player.vx = dx * spd;
         player.vy = dy * spd;
@@ -806,39 +829,90 @@
     // =====================================================
     function drawActor(actor, label) {
         const x = actor.x, y = actor.y;
-        const sp = actor.sprintFrames > 0;
+        const isP1     = label === 'P1';
+        const isMoving = Math.abs(actor.vx) > 0.1 || Math.abs(actor.vy) > 0.1;
 
-        // 衝刺光暈
-        if (sp) {
-            ctx.beginPath(); ctx.arc(x, y, PLAYER_R + 7, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(255,210,0,0.55)'; ctx.lineWidth = 4; ctx.stroke();
+        // 行走幀計數
+        if (isMoving) actor.walkFrame = (actor.walkFrame || 0) + 1;
+        else          actor.walkFrame = 0;
+        const phase = Math.sin((actor.walkFrame || 0) * 0.28);
+
+        const jerseyCol = isP1 ? '#2277ee' : '#cc3344';
+        const shortCol  = isP1 ? '#112266' : '#660011';
+        const skinCol   = '#f5c89a';
+
+        // ── 速度光暈 ────────────────────────────────
+        const glowOn = isP1 ? playerHoldFrames > 20 : actor.sprintFrames > 0;
+        if (glowOn) {
+            ctx.beginPath(); ctx.arc(x, y - 4, PLAYER_R + 6, 0, Math.PI * 2);
+            const glowG = isP1 ? Math.max(80, Math.round(210 - playerHoldFrames)) : 210;
+            ctx.strokeStyle = `rgba(255,${glowG},0,0.55)`;
+            ctx.lineWidth = 4; ctx.stroke();
         }
-        // 帶球外圈
+        // 帶球光圈
         if (actor.hasBall) {
-            ctx.beginPath(); ctx.arc(x, y, PLAYER_R + 6, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(255,230,50,0.85)'; ctx.lineWidth = 3; ctx.stroke();
+            ctx.beginPath(); ctx.arc(x, y - 4, PLAYER_R + 8, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255,230,50,0.75)'; ctx.lineWidth = 2.5; ctx.stroke();
         }
-        // 陰影
-        ctx.beginPath(); ctx.ellipse(x, y + PLAYER_R, PLAYER_R * 0.85, PLAYER_R * 0.28, 0, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fill();
-        // 球員圓圈（漸層）
-        const grad = ctx.createRadialGradient(x - PLAYER_R * 0.3, y - PLAYER_R * 0.3, 2, x, y, PLAYER_R);
-        grad.addColorStop(0, lightenColor(actor.color, 40));
-        grad.addColorStop(1, actor.color);
-        ctx.beginPath(); ctx.arc(x, y, PLAYER_R, 0, Math.PI * 2);
-        ctx.fillStyle = grad; ctx.fill();
-        ctx.strokeStyle = actor.hasBall ? '#ffe040' : 'rgba(255,255,255,0.6)';
-        ctx.lineWidth   = actor.hasBall ? 3 : 1.5; ctx.stroke();
-        // 朝向眼睛
-        const ex = x + actor.facingX * PLAYER_R * 0.45;
-        const ey = y + actor.facingY * PLAYER_R * 0.45;
-        ctx.beginPath(); ctx.arc(ex, ey, 4.5, 0, Math.PI * 2);
-        ctx.fillStyle = 'white'; ctx.fill();
-        ctx.beginPath(); ctx.arc(ex + actor.facingX, ey + actor.facingY, 2.5, 0, Math.PI * 2);
-        ctx.fillStyle = '#222'; ctx.fill();
-        // 標籤
-        ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
-        ctx.fillStyle = 'white'; ctx.fillText(label, x, y + 4);
+
+        // ── 地面陰影 ────────────────────────────────
+        ctx.beginPath();
+        ctx.ellipse(x, y + 17, 12, 4, 0, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fill();
+
+        // ── 雙腳（左右反相擺動）────────────────────
+        ctx.lineCap = 'round';
+        const lx2 = x - 4 + phase * 5,  ly2 = y + 16;
+        const rx2 = x + 4 - phase * 5,  ry2 = y + 16;
+        // 左腳
+        ctx.beginPath(); ctx.moveTo(x - 4, y + 2); ctx.lineTo(lx2, ly2);
+        ctx.strokeStyle = shortCol; ctx.lineWidth = 5; ctx.stroke();
+        ctx.beginPath(); ctx.arc(lx2, ly2, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#3a2a18'; ctx.fill();
+        // 右腳
+        ctx.beginPath(); ctx.moveTo(x + 4, y + 2); ctx.lineTo(rx2, ry2);
+        ctx.strokeStyle = shortCol; ctx.lineWidth = 5; ctx.stroke();
+        ctx.beginPath(); ctx.arc(rx2, ry2, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#3a2a18'; ctx.fill();
+
+        // ── 球褲 ────────────────────────────────────
+        ctx.beginPath(); ctx.roundRect(x - 7, y - 2, 14, 8, 2);
+        ctx.fillStyle = shortCol; ctx.fill();
+
+        // ── 球衣 / 軀幹 ─────────────────────────────
+        ctx.beginPath(); ctx.roundRect(x - 8, y - 14, 16, 14, 4);
+        ctx.fillStyle = jerseyCol; ctx.fill();
+        if (actor.hasBall) {
+            ctx.strokeStyle = '#ffe040'; ctx.lineWidth = 2; ctx.stroke();
+        }
+        // 球衣亮面
+        ctx.beginPath(); ctx.roundRect(x - 5, y - 12, 10, 6, 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fill();
+
+        // ── 雙臂（與腳反相）────────────────────────
+        const arm = -phase;
+        ctx.strokeStyle = jerseyCol; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(x - 8, y - 10); ctx.lineTo(x - 14, y - 3 + arm * 6); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x + 8, y - 10); ctx.lineTo(x + 14, y - 3 - arm * 6); ctx.stroke();
+
+        // ── 頭部 ────────────────────────────────────
+        ctx.beginPath(); ctx.arc(x, y - 20, 7, 0, Math.PI * 2);
+        ctx.fillStyle = skinCol; ctx.fill();
+        ctx.strokeStyle = actor.hasBall ? '#ffe040' : 'rgba(0,0,0,0.22)';
+        ctx.lineWidth = actor.hasBall ? 2 : 1; ctx.stroke();
+
+        // ── 眼睛（朝向方向）────────────────────────
+        const ex = x + actor.facingX * 4;
+        const ey = y - 20 + actor.facingY * 4;
+        ctx.beginPath(); ctx.arc(ex, ey, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#1a1a1a'; ctx.fill();
+
+        // ── 標籤 ────────────────────────────────────
+        ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.fillText(label, x, y - 5);
+
+        ctx.lineCap = 'butt'; ctx.lineWidth = 1;
     }
 
     // =====================================================
@@ -921,10 +995,13 @@
         ctx.fillStyle = '#556';
         ctx.fillText('ESC 暫停  Q 返回選單', CW / 2, 72);
 
-        // 衝刺中提示
-        if (player.sprintFrames > 0) {
+        // 速度指示器
+        if (playerHoldFrames > 0) {
+            const ratio = playerHoldFrames / 120;
+            const pct   = Math.round(100 + ratio * 100);
             ctx.font = 'bold 13px Arial'; ctx.textAlign = 'left';
-            ctx.fillStyle = '#ffe040'; ctx.fillText('⚡ 衝刺中！', FIELD.left, FIELD.top + 20);
+            ctx.fillStyle = ratio >= 1 ? '#ff8800' : '#ffe040';
+            ctx.fillText(`⚡ ${pct}%`, FIELD.left, FIELD.top + 20);
         }
 
         // 帶球提示
@@ -1172,11 +1249,19 @@
         ctx.fillText(winText, CW / 2, CH / 2 + 14);
         ctx.shadowBlur = 0;
 
-        // 最終比分
-        ctx.font = 'bold 34px Arial'; ctx.fillStyle = 'white';
-        ctx.fillText(`${playerScore}  :  ${computerScore}`, CW / 2, CH / 2 + 70);
-        ctx.font = '15px Arial'; ctx.fillStyle = '#778';
-        ctx.fillText('玩家               電腦', CW / 2, CH / 2 + 94);
+        // 最終比分（雙色）
+        ctx.font = 'bold 58px Arial';
+        ctx.textAlign = 'right';  ctx.fillStyle = '#4499ff';
+        ctx.fillText(playerScore,   CW / 2 - 22, CH / 2 + 76);
+        ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        ctx.fillText(':',            CW / 2,      CH / 2 + 76);
+        ctx.textAlign = 'left';   ctx.fillStyle = '#ff4455';
+        ctx.fillText(computerScore,  CW / 2 + 22, CH / 2 + 76);
+        ctx.font = '15px Arial';
+        ctx.textAlign = 'right';  ctx.fillStyle = '#5599ff';
+        ctx.fillText('玩家',         CW / 2 - 28, CH / 2 + 100);
+        ctx.textAlign = 'left';   ctx.fillStyle = '#ff6677';
+        ctx.fillText('電腦',         CW / 2 + 28, CH / 2 + 100);
 
         // 返回提示（閃爍）
         const blink = Math.floor(performance.now() / 500) % 2 === 0;
@@ -1361,6 +1446,28 @@
         cdpad.active = false; cdpad.touchId = null;
         dpadState.up = dpadState.down = dpadState.left = dpadState.right = false;
     }, { passive: false });
+
+    // =====================================================
+    //   全螢幕控制
+    // =====================================================
+    function toggleFullscreen() {
+        const el = document.documentElement;
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+            (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el).catch(() => {});
+        } else {
+            (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+        }
+    }
+    document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
+
+    // 橫屏時自動嘗試全螢幕（Android Chrome 支援；iOS Safari 不支援但不會報錯）
+    window.addEventListener('orientationchange', () => {
+        setTimeout(() => {
+            if (window.innerWidth > window.innerHeight && !document.fullscreenElement) {
+                document.documentElement.requestFullscreen?.().catch(() => {});
+            }
+        }, 400);
+    });
 
     initPositions();
     gameLoop();
