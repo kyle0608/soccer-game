@@ -228,11 +228,11 @@
         },
         hell: {
             label:       '地獄',
-            cSpeed:      3.98,  // 困難再 +50%
-            cSprint:     7.26,
-            coolMin:     25,
-            coolMax:     60,
-            shootDist:   375,
+            cSpeed:      3.98,
+            cSprint:     6.00,  // 略低於玩家極速 6.4，衝刺時仍可追上
+            coolMin:     40,    // 衝刺冷卻拉長，減少無解局面
+            coolMax:     80,
+            shootDist:   300,   // 進禁區才射（非全場一過中線就射）
             color:       '#ff2200',
         },
     };
@@ -1195,7 +1195,8 @@
         ctx.fill();
         ctx.strokeStyle = sb.pressed ? 'rgba(255,158,130,0.95)' : 'rgba(255,98,72,0.52)';
         ctx.lineWidth = 2.5; ctx.stroke();
-        ctx.font = `bold ${sb.pressed ? 15 : 13}px Arial`;
+        const sbFs = Math.max(9, Math.round(sb.radius * 0.27));
+        ctx.font = `bold ${sb.pressed ? sbFs + 2 : sbFs}px Arial`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillStyle = sb.pressed ? 'white' : 'rgba(255,208,198,0.80)';
         ctx.fillText('射門', sb.x, sb.y);
@@ -1222,13 +1223,14 @@
 
         // 四個方向箭頭（自繪三角形，四向風格一致）
         const ad = R * 0.58;
+        const triSz = Math.max(5, Math.round(9 * R / 62));
         [
             [cx,      cy - ad, 'up',    dpadState.up],
             [cx,      cy + ad, 'down',  dpadState.down],
             [cx - ad, cy,      'left',  dpadState.left],
             [cx + ad, cy,      'right', dpadState.right],
         ].forEach(([ax, ay, dir, active]) => {
-            drawTriangle(ax, ay, dir, 9, active ? 'rgba(255,65,40,0.95)' : 'rgba(155,198,255,0.38)');
+            drawTriangle(ax, ay, dir, triSz, active ? 'rgba(255,65,40,0.95)' : 'rgba(155,198,255,0.38)');
         });
 
         // 中心死區標示
@@ -1483,6 +1485,22 @@
     }, { passive: false });
 
     // =====================================================
+    //   控制按鈕位置（橫屏 ↔ 直屏 動態切換）
+    //   橫屏：射門鈕在球場左側邊距，方向鍵在右側邊距，不遮擋球場
+    //   直屏：維持原本底部左右角
+    // =====================================================
+    function updateControlLayout() {
+        const ls = window.innerWidth > window.innerHeight && window.innerWidth < 1100;
+        if (ls) {
+            shootBtn.x = 35;        shootBtn.y = FIELD.centerY; shootBtn.radius = 40;
+            cdpad.cx   = CW - 35;   cdpad.cy   = FIELD.centerY; cdpad.R = 40; cdpad.DEAD = 9;
+        } else {
+            shootBtn.x = 80;        shootBtn.y = CH - 82;       shootBtn.radius = 50;
+            cdpad.cx   = CW - 88;   cdpad.cy   = CH - 82;       cdpad.R = 62; cdpad.DEAD = 14;
+        }
+    }
+
+    // =====================================================
     //   全螢幕控制
     // =====================================================
     function toggleFullscreen() {
@@ -1506,16 +1524,19 @@
     document.addEventListener('fullscreenchange',       onFsChange);
     document.addEventListener('webkitfullscreenchange', onFsChange);
 
-    // 橫屏時自動嘗試全螢幕（Android Chrome 支援；iOS Safari 不支援但不會報錯）
+    // 橫屏時自動嘗試全螢幕 + 更新按鈕位置
     window.addEventListener('orientationchange', () => {
         setTimeout(() => {
+            updateControlLayout();
             if (window.innerWidth > window.innerHeight && !document.fullscreenElement) {
                 document.documentElement.requestFullscreen?.().catch(() => {});
             }
         }, 400);
     });
+    window.addEventListener('resize', updateControlLayout);
 
     initPositions();
+    updateControlLayout();
     gameLoop();
     </script>
 </body>
