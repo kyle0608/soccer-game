@@ -56,11 +56,26 @@
         .diff-btn.medium.active { border-color: #ffaa22; color: #ffaa22; background: #2a1800; }
         .diff-btn.hard.active   { border-color: #ff4455; color: #ff4455; background: #2a0008; }
 
-        #controls {
+        #bottom-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 820px;
             margin-top: 8px;
+        }
+        #controls {
             font-size: 12px;
             color: #556;
             letter-spacing: 0.5px;
+        }
+        #credit {
+            font-size: 12px;
+            color: #445;
+            letter-spacing: 0.5px;
+        }
+        #credit span {
+            color: #7799cc;
+            font-weight: bold;
         }
     </style>
 </head>
@@ -74,7 +89,10 @@
         <button class="diff-btn medium active" onclick="setDifficulty('medium')">普通</button>
         <button class="diff-btn hard"   onclick="setDifficulty('hard')">困難</button>
     </div>
-    <div id="controls">⬆⬇⬅➡ 移動 &nbsp;|&nbsp; 雙擊加速 &nbsp;|&nbsp; Space 射門 &nbsp;|&nbsp; ESC 暫停/繼續 &nbsp;|&nbsp; Q 返回選單</div>
+    <div id="bottom-bar">
+        <div id="controls">⬆⬇⬅➡ 移動 &nbsp;|&nbsp; 雙擊加速 &nbsp;|&nbsp; Space 射門 &nbsp;|&nbsp; ESC 暫停/繼續 &nbsp;|&nbsp; Q 返回選單</div>
+        <div id="credit">Deployed by <span>Kyle Cheng</span></div>
+    </div>
 
     <script>
     // =====================================================
@@ -824,6 +842,11 @@
             ctx.font = 'bold 13px Arial'; ctx.textAlign = 'right';
             ctx.fillStyle = '#ffe040'; ctx.fillText('帶球中 → Space 射門', FIELD.right, FIELD.top + 20);
         }
+
+        // 浮水印（遊戲右下角，半透明不干擾遊玩）
+        ctx.font = '11px Arial'; ctx.textAlign = 'right';
+        ctx.fillStyle = 'rgba(180, 200, 230, 0.35)';
+        ctx.fillText('Deployed by Kyle Cheng', FIELD.right, FIELD.bottom - 6);
     }
 
     // =====================================================
@@ -906,8 +929,13 @@
         const blink = Math.floor(performance.now() / 500) % 2 === 0;
         if (blink) {
             ctx.font = 'bold 26px Arial'; ctx.fillStyle = '#44ff88';
-            ctx.fillText('按任意鍵開始遊戲', CW / 2, CH / 2 + 170);
+            ctx.fillText('按任意鍵開始遊戲', CW / 2, CH / 2 + 168);
         }
+
+        // 署名（開始畫面右下角）
+        ctx.font = '13px Arial'; ctx.textAlign = 'right';
+        ctx.fillStyle = 'rgba(150, 180, 220, 0.75)';
+        ctx.fillText('Deployed by Kyle Cheng', CW - 14, CH - 14);
     }
 
     // =====================================================
