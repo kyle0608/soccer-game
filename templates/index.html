@@ -54,6 +54,7 @@
         .diff-btn.easy.active   { border-color: #44dd88; color: #44dd88; background: #0a2e1a; }
         .diff-btn.medium.active { border-color: #ffaa22; color: #ffaa22; background: #2a1800; }
         .diff-btn.hard.active   { border-color: #ff4455; color: #ff4455; background: #2a0008; }
+        .diff-btn.hell.active   { border-color: #ff2200; color: #ff2200; background: #1a0000; }
 
         /* 暫停鈕（困難鈕右方）*/
         #pauseBtn {
@@ -140,6 +141,7 @@
         <button class="diff-btn easy"   onclick="setDifficulty('easy')">簡單</button>
         <button class="diff-btn medium active" onclick="setDifficulty('medium')">普通</button>
         <button class="diff-btn hard"   onclick="setDifficulty('hard')">困難</button>
+        <button class="diff-btn hell"   onclick="setDifficulty('hell')">地獄</button>
         <button id="pauseBtn" onclick="togglePause()">⏸ 暫停</button>
     </div>
 
@@ -212,12 +214,21 @@
         },
         hard: {
             label:       '困難',
-            cSpeed:      2.21,  // +30%
-            cSprint:     4.03,
-            coolMin:     46,
-            coolMax:     108,
-            shootDist:   208,
+            cSpeed:      2.65,  // 原值 +20%
+            cSprint:     4.84,
+            coolMin:     38,
+            coolMax:     90,
+            shootDist:   250,
             color:       '#ff4455',
+        },
+        hell: {
+            label:       '地獄',
+            cSpeed:      3.98,  // 困難再 +50%
+            cSprint:     7.26,
+            coolMin:     25,
+            coolMax:     60,
+            shootDist:   375,
+            color:       '#ff2200',
         },
     };
 
@@ -900,6 +911,25 @@
         ctx.fillStyle = skinCol; ctx.fill();
         ctx.strokeStyle = actor.hasBall ? '#ffe040' : 'rgba(0,0,0,0.22)';
         ctx.lineWidth = actor.hasBall ? 2 : 1; ctx.stroke();
+
+        // ── 頭髮 ────────────────────────────────────
+        const hairCol = isP1 ? '#2a1505' : '#0d0820';
+        ctx.fillStyle = hairCol;
+        // 髮帽基底（頭頂半弧）
+        ctx.beginPath();
+        ctx.arc(x, y - 21, 8, Math.PI, 0, true);
+        ctx.lineTo(x + 8, y - 18);
+        ctx.lineTo(x - 8, y - 18);
+        ctx.closePath();
+        ctx.fill();
+        // 三支髮尖
+        ctx.beginPath(); ctx.moveTo(x - 2.5, y - 27); ctx.lineTo(x, y - 34); ctx.lineTo(x + 2.5, y - 27); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x - 7, y - 25); ctx.lineTo(x - 10, y - 31); ctx.lineTo(x - 4, y - 25); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x + 4, y - 25); ctx.lineTo(x + 10, y - 31); ctx.lineTo(x + 7, y - 25); ctx.closePath(); ctx.fill();
+        // 髮絲光澤
+        ctx.strokeStyle = isP1 ? 'rgba(180,110,50,0.45)' : 'rgba(100,80,200,0.40)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(x - 2, y - 23, 4, -Math.PI * 0.85, -Math.PI * 0.25, false); ctx.stroke();
 
         // ── 眼睛（朝向方向）────────────────────────
         const ex = x + actor.facingX * 4;
