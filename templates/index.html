@@ -1696,9 +1696,18 @@
             ctx.fillText('按任意鍵 / 點畫面 開始遊戲', CW / 2, CH / 2 + 196);
         }
 
+        // Line 內建瀏覽器提示
+        if (isLineApp) {
+            const bannerH = 44;
+            ctx.fillStyle = 'rgba(0, 180, 60, 0.90)';
+            ctx.fillRect(0, CH - bannerH, CW, bannerH);
+            ctx.font = 'bold 15px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = 'white';
+            ctx.fillText('📱 建議點右上角「⋯」→「以瀏覽器開啟」以支援全螢幕', CW / 2, CH - bannerH / 2 + 6);
+        }
+
         // 署名（開始畫面右下角）
         ctx.font = '13px Arial'; ctx.textAlign = 'right';
-        ctx.fillStyle = 'rgba(150, 180, 220, 0.75)';
+        ctx.fillStyle = isLineApp ? 'rgba(150, 180, 220, 0)' : 'rgba(150, 180, 220, 0.75)';
         ctx.fillText('Deployed by Kyle Cheng', CW - 14, CH - 14);
     }
 
@@ -2258,6 +2267,9 @@
     }
 
     const fsBtn = document.getElementById('fsBtn');
+
+    // Line 內建瀏覽器偵測（封鎖 Fullscreen API）
+    const isLineApp = /Line\//i.test(navigator.userAgent);
 
     // iOS Safari 不支援 requestFullscreen API，隱藏按鈕避免誤導
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
