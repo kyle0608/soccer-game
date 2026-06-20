@@ -954,15 +954,18 @@
     }
 
     function _pkFire() {
-        const dx   = pk.goalX - pk.shooterX;
-        const dy   = pk.aimY  - pk.shooterY;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        pk.bx  = pk.shooterX + pk.goalDir * (PLAYER_R + BALL_R + 3);
-        pk.by  = pk.shooterY;
-        pk.bvx = (dx / dist) * PK_BALL_SPD;
-        pk.bvy = (dy / dist) * PK_BALL_SPD;
+        // 先確定球的實際出發點
+        pk.bx = pk.shooterX + pk.goalDir * (PLAYER_R + BALL_R + 3);
+        pk.by = pk.shooterY;
 
         if (pk.turn === 'player') {
+            // 速度從球的實際位置算到目標點（修正 shooterX 偏移導致的 Y 偏差）
+            const dx   = pk.goalX - pk.bx;
+            const dy   = pk.aimY  - pk.by;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            pk.bvx = (dx / dist) * PK_BALL_SPD;
+            pk.bvy = (dy / dist) * PK_BALL_SPD;
+
             // 電腦守門員：65% 猜對方向，35% 猜錯
             const correct = Math.random() < 0.65;
             if (correct) {
@@ -979,9 +982,9 @@
             pk.compShotZone = zones[Math.floor(Math.random() * 3)];
             pk.aimY = PK_ZONE_Y[pk.compShotZone] + (Math.random() - 0.5) * 8;
 
-            // 重新計算速度向量
-            const dx2   = pk.goalX - pk.shooterX;
-            const dy2   = pk.aimY  - pk.shooterY;
+            // 速度從球的實際位置算到目標點
+            const dx2   = pk.goalX - pk.bx;
+            const dy2   = pk.aimY  - pk.by;
             const dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
             pk.bvx = (dx2 / dist2) * PK_BALL_SPD;
             pk.bvy = (dy2 / dist2) * PK_BALL_SPD;
