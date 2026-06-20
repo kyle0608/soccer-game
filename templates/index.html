@@ -1698,11 +1698,13 @@
 
         // Line 內建瀏覽器提示
         if (isLineApp) {
-            const bannerH = 44;
-            ctx.fillStyle = 'rgba(0, 180, 60, 0.90)';
+            const bannerH = 60;
+            ctx.fillStyle = 'rgba(0, 180, 60, 0.92)';
             ctx.fillRect(0, CH - bannerH, CW, bannerH);
-            ctx.font = 'bold 15px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = 'white';
-            ctx.fillText('📱 建議點右上角「⋯」→「以瀏覽器開啟」以支援全螢幕', CW / 2, CH - bannerH / 2 + 6);
+            ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center'; ctx.fillStyle = 'white';
+            ctx.fillText('📱 請點右下角「⋯」→「以瀏覽器開啟」', CW / 2, CH - bannerH / 2 - 4);
+            ctx.font = 'bold 17px Arial';
+            ctx.fillText('以支援全螢幕遊玩', CW / 2, CH - bannerH / 2 + 18);
         }
 
         // 署名（開始畫面右下角）
