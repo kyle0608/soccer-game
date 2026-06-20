@@ -128,7 +128,12 @@
             cursor: pointer;
             touch-action: manipulation;
             -webkit-tap-highlight-color: transparent;
+            transition: background 0.12s, border-color 0.12s, transform 0.10s, color 0.12s;
         }
+        #fsBtn:hover  { background: rgba(80,80,80,0.70); border-color: rgba(255,255,255,0.6); }
+        #fsBtn:active { background: rgba(255,255,255,0.30); color: white; border-color: white; transform: scale(0.88); }
+        #fsBtn.fs-on  { background: rgba(200,60,30,0.55); border-color: rgba(255,140,110,0.75); color: white; }
+        #fsBtn.fs-on:active { background: rgba(255,100,60,0.80); transform: scale(0.88); }
         @media (max-width: 860px) { #fsBtn { display: block; } }
     </style>
 </head>
@@ -1488,7 +1493,18 @@
             (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
         }
     }
-    document.getElementById('fsBtn').addEventListener('click', toggleFullscreen);
+    const fsBtn = document.getElementById('fsBtn');
+    fsBtn.addEventListener('click', toggleFullscreen);
+
+    // 全螢幕狀態同步按鈕樣式
+    function onFsChange() {
+        const inFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+        fsBtn.textContent = inFs ? '⊠' : '⛶';
+        fsBtn.title       = inFs ? '離開全螢幕' : '全螢幕';
+        fsBtn.classList.toggle('fs-on', inFs);
+    }
+    document.addEventListener('fullscreenchange',       onFsChange);
+    document.addEventListener('webkitfullscreenchange', onFsChange);
 
     // 橫屏時自動嘗試全螢幕（Android Chrome 支援；iOS Safari 不支援但不會報錯）
     window.addEventListener('orientationchange', () => {
