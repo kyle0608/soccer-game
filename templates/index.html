@@ -2048,19 +2048,20 @@
 
     function gameLoop(now) {
         requestAnimationFrame(gameLoop);
-        if (_lastFrameTime === 0) { _lastFrameTime = now; return; }
+        if (_lastFrameTime === 0) { _lastFrameTime = now; }
 
         // 累積真實經過時間，上限 50ms 防止切換分頁後一次跑太多幀
         _accumulator += Math.min(now - _lastFrameTime, 50);
         _lastFrameTime = now;
 
-        let updated = false;
+        // update 以固定 60fps 步驟消耗 accumulator
         while (_accumulator >= _FIXED_STEP) {
             update();
             _accumulator -= _FIXED_STEP;
-            updated = true;
         }
-        if (updated) draw();
+
+        // draw 每幀都執行，確保畫面不會空白
+        draw();
     }
 
     // 點擊 canvas 時把焦點拉回 document，確保鍵盤事件正常觸發
