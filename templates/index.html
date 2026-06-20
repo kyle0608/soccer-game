@@ -882,9 +882,9 @@
 
     // 三個射門 / 守門預測區（以 Y 座標表示，因球門在左右兩側）
     const PK_ZONE_Y = {
-        left:   GOAL_Y + GOAL_H * 0.18,
+        left:   GOAL_Y + GOAL_H * 0.10,
         center: GOAL_Y + GOAL_H * 0.50,
-        right:  GOAL_Y + GOAL_H * 0.82,
+        right:  GOAL_Y + GOAL_H * 0.90,
     };
 
     // 預測按鈕版面（繪製於場地下方）
@@ -977,7 +977,7 @@
             // 電腦踢球：在三個固定區隨機選一區射門
             const zones = ['left', 'center', 'right'];
             pk.compShotZone = zones[Math.floor(Math.random() * 3)];
-            pk.aimY = PK_ZONE_Y[pk.compShotZone] + (Math.random() - 0.5) * 18;
+            pk.aimY = PK_ZONE_Y[pk.compShotZone] + (Math.random() - 0.5) * 8;
 
             // 重新計算速度向量
             const dx2   = pk.goalX - pk.shooterX;
