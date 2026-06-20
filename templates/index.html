@@ -266,8 +266,8 @@
     }
 
     function togglePause() {
-        if (phase === 'playing') phase = 'paused';
-        else if (phase === 'paused') phase = 'playing';
+        if (phase === 'playing') { phase = 'paused'; playWhistleSound(); }
+        else if (phase === 'paused') { phase = 'playing'; playWhistleSound(); }
     }
 
     // =====================================================
@@ -305,8 +305,10 @@
     };
 
     // 遊戲計時
-    const GAME_SECONDS = 60;
-    let gameFrames = 0;        // 本局已計幀數
+    const HALF_SECONDS = 30;              // 每半場秒數
+    const GAME_SECONDS = HALF_SECONDS * 2; // 全場 60 秒
+    let gameFrames = 0;        // 本局已計幀數（貫穿上下半場，不重置）
+    let currentHalf = 1;       // 目前半場（1 = 上半場，2 = 下半場）
     let playerHoldFrames = 0;  // 連續持壓方向幀數（鍵盤 + D-pad 通用，用於加速）
 
     // =====================================================
@@ -325,11 +327,7 @@
 
         // ── ESC：暫停 / 繼續 ────────────────────────────
         if (e.code === 'Escape') {
-            if (phase === 'playing') {
-                phase = 'paused';
-            } else if (phase === 'paused') {
-                phase = 'playing';
-            }
+            togglePause(); // 含哨音
             // ESC 按下後強制把焦點拉回頁面，防止瀏覽器搶走焦點導致後續 Q 失效
             document.body.focus();
             keysDown[e.code] = true;
@@ -343,6 +341,7 @@
                 playerScore   = 0;
                 computerScore = 0;
                 gameFrames    = 0;
+                currentHalf   = 1;
                 initPositions();
             }
             keysDown[e.code] = true;
@@ -352,7 +351,15 @@
         // ── 遊戲結束畫面：任意鍵返回主選單 ──────────────
         if (phase === 'gameover') {
             phase = 'start'; playerScore = 0; computerScore = 0;
-            gameFrames = 0; initPositions();
+            gameFrames = 0; currentHalf = 1; initPositions();
+            return;
+        }
+
+        // ── 中場休息：任意鍵開始下半場 ──────────────────
+        if (phase === 'halftime') {
+            currentHalf = 2; phase = 'playing';
+            playWhistleSound(); initPositions();
+            keysDown[e.code] = true;
             return;
         }
 
@@ -360,6 +367,7 @@
         if (e.code === 'Space') {
             if (phase === 'start') {
                 phase = 'playing'; gameFrames = 0;
+                playWhistleSound();
                 keysDown[e.code] = true;
                 return;
             }
@@ -368,6 +376,7 @@
         // ── 開始畫面：任意（非功能）鍵開始 ────────────
         if (phase === 'start') {
             phase = 'playing'; gameFrames = 0;
+            playWhistleSound();
             keysDown[e.code] = true;
             return;
         }
@@ -746,6 +755,46 @@
         } catch (e) {}
     }
 
+    // 哨音（開賽 / 暫停 / 中場 / 結束）
+    function playWhistleSound() {
+        try {
+            const ac  = getAudioCtx();
+            const now = ac.currentTime;
+            const osc  = ac.createOscillator();
+            const gain = ac.createGain();
+            osc.connect(gain); gain.connect(ac.destination);
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(2600, now);
+            osc.frequency.linearRampToValueAtTime(2200, now + 0.18);
+            osc.frequency.linearRampToValueAtTime(2500, now + 0.32);
+            gain.gain.setValueAtTime(0, now);
+            gain.gain.linearRampToValueAtTime(0.45, now + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+            osc.start(now); osc.stop(now + 0.4);
+        } catch (e) {}
+    }
+
+    // 中場輕鬆音效（6 音小旋律）
+    function playHalftimeMusic() {
+        try {
+            const ac  = getAudioCtx();
+            const now = ac.currentTime;
+            const melody = [523, 659, 784, 659, 523, 392]; // C5 E5 G5 E5 C5 G4
+            melody.forEach((freq, i) => {
+                const osc  = ac.createOscillator();
+                const gain = ac.createGain();
+                osc.connect(gain); gain.connect(ac.destination);
+                osc.type = 'triangle';
+                osc.frequency.value = freq;
+                const t = now + 0.42 + i * 0.28; // 哨音後 0.42s 才開始
+                gain.gain.setValueAtTime(0, t);
+                gain.gain.linearRampToValueAtTime(0.28, t + 0.04);
+                gain.gain.exponentialRampToValueAtTime(0.001, t + 0.40);
+                osc.start(t); osc.stop(t + 0.44);
+            });
+        } catch (e) {}
+    }
+
     // =====================================================
     //   工具
     // =====================================================
@@ -1014,7 +1063,8 @@
         ctx.fillRect(0, 0, CW, FIELD.top - 2);
 
         // ── 倒數計時（HUD 左側）────────────────────────
-        const secsLeft = Math.max(0, Math.ceil((GAME_SECONDS * 60 - gameFrames) / 60));
+        const halfEnd  = currentHalf === 1 ? HALF_SECONDS * 60 : GAME_SECONDS * 60;
+        const secsLeft = Math.max(0, Math.ceil((halfEnd - gameFrames) / 60));
         const tmm = String(Math.floor(secsLeft / 60));
         const tss = String(secsLeft % 60).padStart(2, '0');
         const timeBlk = secsLeft <= 10 && Math.floor(performance.now() / 250) % 2 === 0;
@@ -1022,7 +1072,7 @@
         ctx.fillStyle = secsLeft <= 10 ? (timeBlk ? '#ff2233' : '#ff8800') : 'white';
         ctx.fillText(`${tmm}:${tss}`, 56, 52);
         ctx.font = '10px Arial'; ctx.fillStyle = '#667';
-        ctx.fillText('倒數', 56, 68);
+        ctx.fillText(currentHalf === 1 ? '上半場' : '下半場', 56, 68);
 
         // 玩家標籤
         ctx.font = 'bold 22px Arial'; ctx.textAlign = 'right';
@@ -1108,6 +1158,49 @@
         // 操作提示
         ctx.font = '18px Arial'; ctx.fillStyle = '#aab';
         ctx.fillText('ESC 繼續遊戲　｜　Q 返回主選單', CW / 2, CH / 2 + 36);
+    }
+
+    // =====================================================
+    //   繪圖：中場休息覆蓋層
+    // =====================================================
+    function drawHalftimeScreen() {
+        ctx.fillStyle = 'rgba(0,0,10,0.72)';
+        ctx.fillRect(0, 0, CW, CH);
+
+        ctx.beginPath();
+        ctx.roundRect(CW / 2 - 220, CH / 2 - 115, 440, 228, 16);
+        ctx.fillStyle = '#131325'; ctx.fill();
+        ctx.strokeStyle = '#445588'; ctx.lineWidth = 2; ctx.stroke();
+
+        // 標題
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 36px Arial';
+        ctx.fillStyle = '#ffe040';
+        ctx.shadowColor = 'rgba(255,200,0,0.4)'; ctx.shadowBlur = 14;
+        ctx.fillText('⏱ 中場休息', CW / 2, CH / 2 - 60);
+        ctx.shadowBlur = 0;
+
+        // 比分
+        ctx.font = 'bold 54px Arial';
+        ctx.textAlign = 'right';  ctx.fillStyle = '#4499ff';
+        ctx.fillText(playerScore, CW / 2 - 22, CH / 2 + 10);
+        ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        ctx.fillText(':', CW / 2, CH / 2 + 10);
+        ctx.textAlign = 'left';   ctx.fillStyle = '#ff4455';
+        ctx.fillText(computerScore, CW / 2 + 22, CH / 2 + 10);
+
+        // 球隊標籤
+        ctx.font = '13px Arial';
+        ctx.textAlign = 'right';  ctx.fillStyle = '#5599ff';
+        ctx.fillText('玩家', CW / 2 - 28, CH / 2 + 34);
+        ctx.textAlign = 'left';   ctx.fillStyle = '#ff6677';
+        ctx.fillText('電腦', CW / 2 + 28, CH / 2 + 34);
+
+        // 繼續提示（閃爍）
+        if (Math.floor(performance.now() / 500) % 2 === 0) {
+            ctx.font = 'bold 17px Arial'; ctx.fillStyle = '#44ff88'; ctx.textAlign = 'center';
+            ctx.fillText('按任意鍵 / 點畫面  開始下半場', CW / 2, CH / 2 + 76);
+        }
     }
 
     // =====================================================
@@ -1425,10 +1518,11 @@
         // 各狀態的覆蓋層
         if (phase === 'goal')     drawGoalScreen();
         if (phase === 'paused')   drawPauseScreen();
+        if (phase === 'halftime') drawHalftimeScreen();
         if (phase === 'start')    drawStartScreen();
         if (phase === 'gameover') drawGameOverScreen();
 
-        // 回主選單按鈕：疊在所有層之上（進行中 / 暫停 / 進球 均可見）
+        // 回主選單按鈕：疊在所有層之上（進行中 / 暫停 / 進球 / 中場 均可見）
         if (phase !== 'start' && phase !== 'gameover') drawMenuBtn();
     }
 
@@ -1436,18 +1530,19 @@
     //   主更新函式
     // =====================================================
     function update() {
-        // 暫停、開始選單、遊戲結束 → 跳過遊戲邏輯
-        if (phase === 'start' || phase === 'paused' || phase === 'gameover') return;
+        // 暫停、開始選單、遊戲結束、中場休息 → 跳過遊戲邏輯
+        if (phase === 'start' || phase === 'paused' || phase === 'gameover' || phase === 'halftime') return;
 
         if (phase === 'goal') {
             goalTimer--;
             if (goalTimer <= 0) {
                 // 進球動畫結束後才判斷時間是否已到
                 if (gameFrames >= GAME_SECONDS * 60) {
-                    phase = 'gameover';
+                    phase = 'gameover'; playWhistleSound();
+                } else if (currentHalf === 1 && gameFrames >= HALF_SECONDS * 60) {
+                    phase = 'halftime'; playWhistleSound(); playHalftimeMusic();
                 } else {
-                    phase = 'playing';
-                    initPositions();
+                    phase = 'playing'; initPositions();
                 }
             }
             return;
@@ -1455,9 +1550,14 @@
 
         // 倒數計時
         gameFrames++;
+
+        // 上半場結束 → 中場休息
+        if (currentHalf === 1 && gameFrames >= HALF_SECONDS * 60) {
+            phase = 'halftime'; playWhistleSound(); playHalftimeMusic(); return;
+        }
+        // 下半場結束 → 遊戲結束
         if (gameFrames >= GAME_SECONDS * 60) {
-            phase = 'gameover';
-            return;
+            phase = 'gameover'; playWhistleSound(); return;
         }
 
         // 正常遊戲更新
@@ -1515,11 +1615,17 @@
         // 遊戲結束：點任何地方返回主選單
         if (phase === 'gameover') {
             phase = 'start'; playerScore = 0; computerScore = 0;
-            gameFrames = 0; initPositions(); return;
+            gameFrames = 0; currentHalf = 1; initPositions(); return;
+        }
+
+        // 中場休息：點任何地方開始下半場
+        if (phase === 'halftime') {
+            currentHalf = 2; phase = 'playing';
+            playWhistleSound(); initPositions(); return;
         }
 
         // 開始畫面：點任何地方開始遊戲
-        if (phase === 'start') { phase = 'playing'; gameFrames = 0; return; }
+        if (phase === 'start') { phase = 'playing'; gameFrames = 0; playWhistleSound(); return; }
 
         Array.from(e.changedTouches).forEach(t => {
             const p = getTouchPos(t);
@@ -1528,11 +1634,11 @@
             const mbdx = p.x - 28, mbdy = p.y - 38;
             if (mbdx * mbdx + mbdy * mbdy < 484) { // r=22, r²=484
                 phase = 'start'; playerScore = 0; computerScore = 0;
-                gameFrames = 0; initPositions(); return;
+                gameFrames = 0; currentHalf = 1; initPositions(); return;
             }
 
             // 暫停中：點非選單區繼續遊戲
-            if (phase === 'paused') { phase = 'playing'; return; }
+            if (phase === 'paused') { phase = 'playing'; playWhistleSound(); return; }
 
             if (!isLandscapeMobile()) {
                 // 射門按鈕（左下，直屏時才在主 canvas 偵測）
@@ -1585,9 +1691,10 @@
     // =====================================================
     shootCvs.addEventListener('touchstart', e => {
         e.preventDefault();
-        if (phase === 'gameover') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; initPositions(); return; }
-        if (phase === 'start')    { phase='playing'; gameFrames=0; return; }
-        if (phase === 'paused')   { phase='playing'; return; }
+        if (phase === 'gameover') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; currentHalf=1; initPositions(); return; }
+        if (phase === 'halftime') { currentHalf=2; phase='playing'; playWhistleSound(); initPositions(); return; }
+        if (phase === 'start')    { phase='playing'; gameFrames=0; playWhistleSound(); return; }
+        if (phase === 'paused')   { phase='playing'; playWhistleSound(); return; }
         shootBtn.pressed = true;
         if (player.hasBall && phase === 'playing') doPlayerShoot();
     }, { passive: false });
@@ -1597,9 +1704,10 @@
     let extDpadTouchId = null;
     dpadCvs.addEventListener('touchstart', e => {
         e.preventDefault();
-        if (phase === 'gameover') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; initPositions(); return; }
-        if (phase === 'start')    { phase='playing'; gameFrames=0; return; }
-        if (phase === 'paused')   { phase='playing'; return; }
+        if (phase === 'gameover') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; currentHalf=1; initPositions(); return; }
+        if (phase === 'halftime') { currentHalf=2; phase='playing'; playWhistleSound(); initPositions(); return; }
+        if (phase === 'start')    { phase='playing'; gameFrames=0; playWhistleSound(); return; }
+        if (phase === 'paused')   { phase='playing'; playWhistleSound(); return; }
         const t = e.changedTouches[0];
         if (extDpadTouchId === null) { extDpadTouchId = t.identifier; updateExtDpadDir(t.clientX, t.clientY); }
     }, { passive: false });
