@@ -22,6 +22,15 @@
             border-radius: 6px;
             box-shadow: 0 0 30px rgba(68, 136, 255, 0.3);
             display: block;
+            touch-action: none; /* 防止觸碰 canvas 時觸發頁面捲動或縮放 */
+        }
+
+        /* ===== 手機響應式（螢幕寬度 < 860px 時縮放） ===== */
+        @media (max-width: 860px) {
+            body { justify-content: flex-start; padding-top: 0; }
+            #gameCanvas { width: 100vw; height: auto; border-radius: 0; border-left: none; border-right: none; }
+            #difficultyPanel { width: 100%; padding: 0 8px; }
+            #bottom-bar { width: 100%; padding: 0 8px; flex-wrap: wrap; gap: 4px; }
         }
 
         /* ===== 難度選擇面板 ===== */
@@ -198,6 +207,13 @@
     // 電腦搶球計時器：電腦持續接觸玩家累積幀數，達到 TACKLE_FRAMES 才成功搶球
     let tackleTimer = 0;
 
+    // 觸控搖桿狀態（提前宣告，updatePlayer 需要讀取）
+    const joyState = {
+        active: false, touchId: null,
+        baseX: 0, baseY: 0, thumbX: 0, thumbY: 0,
+        dx: 0, dy: 0, magnitude: 0, MAX_R: 62,
+    };
+
     // =====================================================
     //   鍵盤
     // =====================================================
@@ -328,24 +344,35 @@
     // =====================================================
     function updatePlayer() {
         let dx = 0, dy = 0;
+
+        // ── 鍵盤輸入 ─────────────────────────────────
         if (keysDown['ArrowLeft'])  dx -= 1;
         if (keysDown['ArrowRight']) dx += 1;
         if (keysDown['ArrowUp'])    dy -= 1;
         if (keysDown['ArrowDown'])  dy += 1;
 
-        if (player.sprintFrames > 0) player.sprintFrames--;
-        const spd = (player.sprintFrames > 0) ? P_SPRINT : P_SPEED;
+        // ── 觸控搖桿輸入（與鍵盤疊加）───────────────
+        if (joyState.active) {
+            dx += joyState.dx;
+            dy += joyState.dy;
+        }
 
-        // 斜向正規化
-        if (dx !== 0 && dy !== 0) { dx *= 0.7071; dy *= 0.7071; }
+        // 正規化：避免鍵盤+觸控疊加時速度超過 1
+        const inputMag = Math.sqrt(dx * dx + dy * dy);
+        if (inputMag > 1) { dx /= inputMag; dy /= inputMag; }
+
+        // ── 衝刺計算 ─────────────────────────────────
+        if (player.sprintFrames > 0) player.sprintFrames--;
+        // 搖桿推超過 85% 也觸發衝刺效果（不消耗 sprintFrames）
+        const isTouchSprint = joyState.active && joyState.magnitude > 0.85;
+        const spd = (player.sprintFrames > 0 || isTouchSprint) ? P_SPRINT : P_SPEED;
 
         player.vx = dx * spd;
         player.vy = dy * spd;
 
-        if (dx !== 0 || dy !== 0) {
-            const mag = Math.sqrt(dx * dx + dy * dy);
-            player.facingX = dx / mag;
-            player.facingY = dy / mag;
+        if (inputMag > 0.05) {
+            player.facingX = dx / inputMag;
+            player.facingY = dy / inputMag;
         }
 
         player.x += player.vx;
@@ -949,6 +976,7 @@
         drawActor(computer, 'AI');  // 電腦先畫（玩家在上層）
         drawActor(player, 'P1');
         drawTackleIndicator();      // 搶球倒數進度圈（在球員上層）
+        if (phase === 'playing') drawMobileControls(); // 觸控搖桿與射門按鈕
         drawHUD();
 
         // 各狀態的覆蓋層
@@ -992,8 +1020,168 @@
 
     // 點擊 canvas 時把焦點拉回 document，確保鍵盤事件正常觸發
     canvas.addEventListener('click', () => canvas.focus());
-    canvas.setAttribute('tabindex', '0'); // 讓 canvas 可被聚焦
+    canvas.setAttribute('tabindex', '0');
     canvas.focus();
+
+    // =====================================================
+    //   觸控輸入（手機 / 平板）
+    // =====================================================
+
+    // 射門按鈕（右下角固定）
+    const shootBtnTouch = {
+        x: CW - 82, y: CH - 88,
+        radius: 58,
+        pressed: false,
+        touchId: null,
+    };
+
+    /** Touch 螢幕座標 → canvas 內部座標（處理 CSS 縮放） */
+    function getTouchPos(touch) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+            x: (touch.clientX - rect.left) * (CW / rect.width),
+            y: (touch.clientY - rect.top)  * (CH / rect.height),
+        };
+    }
+
+    canvas.addEventListener('touchstart', e => {
+        e.preventDefault();
+        Array.from(e.changedTouches).forEach(t => {
+            const pos = getTouchPos(t);
+
+            // 優先判斷：是否點到右下角射門按鈕
+            const bdx = pos.x - shootBtnTouch.x;
+            const bdy = pos.y - shootBtnTouch.y;
+            if (bdx*bdx + bdy*bdy < shootBtnTouch.radius * shootBtnTouch.radius) {
+                shootBtnTouch.pressed = true;
+                shootBtnTouch.touchId = t.identifier;
+                if (player.hasBall && phase === 'playing') doPlayerShoot();
+                return;
+            }
+
+            // 其餘觸碰 → 啟動浮動搖桿
+            if (!joyState.active) {
+                joyState.active    = true;
+                joyState.touchId   = t.identifier;
+                joyState.baseX     = pos.x;
+                joyState.baseY     = pos.y;
+                joyState.thumbX    = pos.x;
+                joyState.thumbY    = pos.y;
+                joyState.dx        = 0;
+                joyState.dy        = 0;
+                joyState.magnitude = 0;
+            }
+        });
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', e => {
+        e.preventDefault();
+        Array.from(e.changedTouches).forEach(t => {
+            if (t.identifier !== joyState.touchId) return;
+            const pos = getTouchPos(t);
+            let dx  = pos.x - joyState.baseX;
+            let dy  = pos.y - joyState.baseY;
+            const d = Math.sqrt(dx*dx + dy*dy);
+
+            // 限制拇指在最大半徑內
+            if (d > joyState.MAX_R) { dx = dx/d * joyState.MAX_R; dy = dy/d * joyState.MAX_R; }
+
+            joyState.thumbX    = joyState.baseX + dx;
+            joyState.thumbY    = joyState.baseY + dy;
+            joyState.magnitude = Math.min(d / joyState.MAX_R, 1);
+
+            if (d > 8) {
+                joyState.dx = dx / joyState.MAX_R;
+                joyState.dy = dy / joyState.MAX_R;
+            } else {
+                joyState.dx = 0; joyState.dy = 0;
+            }
+        });
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', e => {
+        e.preventDefault();
+        Array.from(e.changedTouches).forEach(t => {
+            if (t.identifier === joyState.touchId) {
+                joyState.active = false; joyState.touchId = null;
+                joyState.dx = 0; joyState.dy = 0; joyState.magnitude = 0;
+            }
+            if (t.identifier === shootBtnTouch.touchId) {
+                shootBtnTouch.pressed = false; shootBtnTouch.touchId = null;
+            }
+        });
+    }, { passive: false });
+
+    // 觸控取消（電話來電等中斷）
+    canvas.addEventListener('touchcancel', () => {
+        joyState.active = false; joyState.touchId = null;
+        joyState.dx = 0; joyState.dy = 0; joyState.magnitude = 0;
+        shootBtnTouch.pressed = false; shootBtnTouch.touchId = null;
+    }, { passive: false });
+
+    // =====================================================
+    //   繪圖：手機觸控介面（搖桿 + 射門按鈕）
+    // =====================================================
+    function drawMobileControls() {
+        // ── 虛擬搖桿 ──────────────────────────────────
+        if (joyState.active) {
+            const bx = joyState.baseX, by = joyState.baseY;
+            const tx = joyState.thumbX, ty = joyState.thumbY;
+
+            // 外圈（活動範圍）
+            ctx.beginPath();
+            ctx.arc(bx, by, joyState.MAX_R, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+            ctx.lineWidth   = 2;
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(255,255,255,0.05)';
+            ctx.fill();
+
+            // 拇指圓圈（藍色）
+            ctx.beginPath();
+            ctx.arc(tx, ty, 26, 0, Math.PI * 2);
+            ctx.fillStyle = joyState.magnitude > 0.85
+                ? 'rgba(255,210,50,0.80)'  // 衝刺中 → 金黃色
+                : 'rgba(90,155,255,0.75)'; // 一般 → 藍色
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(200,220,255,0.8)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+        } else {
+            // 未觸碰：左下角顯示半透明提示圈
+            const hx = 88, hy = CH - 92;
+            ctx.beginPath();
+            ctx.arc(hx, hy, joyState.MAX_R, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            // 中心小圓
+            ctx.beginPath();
+            ctx.arc(hx, hy, 24, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255,255,255,0.07)';
+            ctx.fill();
+            // 提示文字
+            ctx.font = '11px Arial'; ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(255,255,255,0.18)';
+            ctx.fillText('移動', hx, hy + 4);
+        }
+
+        // ── 射門按鈕（右下角固定，始終可見）────────────
+        const sb = shootBtnTouch;
+        ctx.beginPath();
+        ctx.arc(sb.x, sb.y, sb.radius, 0, Math.PI * 2);
+        ctx.fillStyle = sb.pressed ? 'rgba(255,75,35,0.90)' : 'rgba(210,55,25,0.42)';
+        ctx.fill();
+        ctx.strokeStyle = sb.pressed ? 'rgba(255,170,140,0.95)' : 'rgba(255,120,90,0.50)';
+        ctx.lineWidth   = 2.5;
+        ctx.stroke();
+
+        ctx.font      = `bold ${sb.pressed ? 17 : 15}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = sb.pressed ? 'white' : 'rgba(255,210,200,0.75)';
+        ctx.fillText('射門', sb.x, sb.y + 5);
+    }
 
     initPositions();
     gameLoop();
