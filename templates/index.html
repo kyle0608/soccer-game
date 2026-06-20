@@ -253,6 +253,11 @@
         R: 62, DEAD: 14,
     };
 
+    // 遊戲計時
+    const GAME_SECONDS = 60;
+    let gameFrames = 0;      // 本局已計幀數
+    let cdpadHoldFrames = 0; // 連續持壓方向鍵幀數（用於加速）
+
     // =====================================================
     //   鍵盤
     // =====================================================
@@ -286,16 +291,24 @@
                 phase         = 'start';
                 playerScore   = 0;
                 computerScore = 0;
+                gameFrames    = 0;
                 initPositions();
             }
             keysDown[e.code] = true;
             return;
         }
 
+        // ── 遊戲結束畫面：任意鍵返回主選單 ──────────────
+        if (phase === 'gameover') {
+            phase = 'start'; playerScore = 0; computerScore = 0;
+            gameFrames = 0; initPositions();
+            return;
+        }
+
         // ── Space：開始畫面時開始遊戲 ──────────────────
         if (e.code === 'Space') {
             if (phase === 'start') {
-                phase = 'playing';
+                phase = 'playing'; gameFrames = 0;
                 keysDown[e.code] = true;
                 return;
             }
@@ -303,7 +316,7 @@
 
         // ── 開始畫面：任意（非功能）鍵開始 ────────────
         if (phase === 'start') {
-            phase = 'playing';
+            phase = 'playing'; gameFrames = 0;
             keysDown[e.code] = true;
             return;
         }
@@ -396,7 +409,15 @@
 
         // ── 衝刺計算 ─────────────────────────────────
         if (player.sprintFrames > 0) player.sprintFrames--;
-        const spd = player.sprintFrames > 0 ? P_SPRINT : P_SPEED;
+
+        // ── D-pad 長壓加速（持壓 1.5 秒後觸頂 +50%）────
+        if (cdpad.active) {
+            cdpadHoldFrames = Math.min(cdpadHoldFrames + 1, 90);
+        } else {
+            cdpadHoldFrames = 0;
+        }
+        const dpadBoost = cdpad.active ? (1 + 0.5 * Math.min(cdpadHoldFrames / 90, 1)) : 1;
+        const spd = player.sprintFrames > 0 ? P_SPRINT : P_SPEED * dpadBoost;
 
         player.vx = dx * spd;
         player.vy = dy * spd;
@@ -867,6 +888,17 @@
         ctx.fillStyle = '#111133';
         ctx.fillRect(0, 0, CW, FIELD.top - 2);
 
+        // ── 倒數計時（HUD 左側）────────────────────────
+        const secsLeft = Math.max(0, Math.ceil((GAME_SECONDS * 60 - gameFrames) / 60));
+        const tmm = String(Math.floor(secsLeft / 60));
+        const tss = String(secsLeft % 60).padStart(2, '0');
+        const timeBlk = secsLeft <= 10 && Math.floor(performance.now() / 250) % 2 === 0;
+        ctx.font = 'bold 26px Arial'; ctx.textAlign = 'left';
+        ctx.fillStyle = secsLeft <= 10 ? (timeBlk ? '#ff2233' : '#ff8800') : 'white';
+        ctx.fillText(`${tmm}:${tss}`, 56, 52);
+        ctx.font = '10px Arial'; ctx.fillStyle = '#667';
+        ctx.fillText('倒數', 56, 68);
+
         // 玩家標籤
         ctx.font = 'bold 22px Arial'; ctx.textAlign = 'right';
         ctx.fillStyle = '#4499ff'; ctx.fillText('玩家', CW / 2 - 55, 48);
@@ -1011,6 +1043,37 @@
     //   繪圖：Canvas 內觸控控制介面
     //   射門按鈕（左下）+ 圓形方向鍵（右下）
     // =====================================================
+
+    /** 繪製方向三角形（四向風格一致，取代 Unicode 字符） */
+    function drawTriangle(x, y, dir, size, color) {
+        ctx.beginPath();
+        switch (dir) {
+            case 'up':
+                ctx.moveTo(x,              y - size);
+                ctx.lineTo(x + size * 0.78, y + size * 0.52);
+                ctx.lineTo(x - size * 0.78, y + size * 0.52);
+                break;
+            case 'down':
+                ctx.moveTo(x,              y + size);
+                ctx.lineTo(x + size * 0.78, y - size * 0.52);
+                ctx.lineTo(x - size * 0.78, y - size * 0.52);
+                break;
+            case 'left':
+                ctx.moveTo(x - size,        y);
+                ctx.lineTo(x + size * 0.52, y - size * 0.78);
+                ctx.lineTo(x + size * 0.52, y + size * 0.78);
+                break;
+            case 'right':
+                ctx.moveTo(x + size,        y);
+                ctx.lineTo(x - size * 0.52, y - size * 0.78);
+                ctx.lineTo(x - size * 0.52, y + size * 0.78);
+                break;
+        }
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+    }
+
     function drawMobileControls() {
         // ── 射門按鈕 ──────────────────────────────────────
         const sb = shootBtn;
@@ -1045,18 +1108,15 @@
         ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
         ctx.stroke();
 
-        // 四個方向箭頭
-        const ad = R * 0.60;
-        ctx.font = 'bold 14px Arial';
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        // 四個方向箭頭（自繪三角形，四向風格一致）
+        const ad = R * 0.58;
         [
-            [cx,      cy - ad, '▲', dpadState.up],
-            [cx,      cy + ad, '▼', dpadState.down],
-            [cx - ad, cy,      '◀', dpadState.left],
-            [cx + ad, cy,      '▶', dpadState.right],
-        ].forEach(([ax, ay, arrow, active]) => {
-            ctx.fillStyle = active ? 'rgba(205,232,255,0.95)' : 'rgba(155,198,255,0.38)';
-            ctx.fillText(arrow, ax, ay);
+            [cx,      cy - ad, 'up',    dpadState.up],
+            [cx,      cy + ad, 'down',  dpadState.down],
+            [cx - ad, cy,      'left',  dpadState.left],
+            [cx + ad, cy,      'right', dpadState.right],
+        ].forEach(([ax, ay, dir, active]) => {
+            drawTriangle(ax, ay, dir, 9, active ? 'rgba(255,65,40,0.95)' : 'rgba(155,198,255,0.38)');
         });
 
         // 中心死區標示
@@ -1066,6 +1126,69 @@
         ctx.fill();
 
         ctx.textBaseline = 'alphabetic';
+    }
+
+    // =====================================================
+    //   繪圖：回主選單按鈕（覆蓋在所有層之上）
+    // =====================================================
+    function drawMenuBtn() {
+        const mbx = 28, mby = 38, mbr = 22;
+        ctx.beginPath(); ctx.arc(mbx, mby, mbr, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(38, 55, 110, 0.60)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(90, 128, 200, 0.60)';
+        ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.font = 'bold 18px Arial';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(165, 200, 240, 0.88)';
+        ctx.fillText('←', mbx, mby);
+        ctx.textBaseline = 'alphabetic';
+    }
+
+    // =====================================================
+    //   繪圖：遊戲結束畫面（時間到）
+    // =====================================================
+    function drawGameOverScreen() {
+        ctx.fillStyle = 'rgba(0,0,0,0.82)';
+        ctx.fillRect(0, 0, CW, CH);
+
+        const pWin = playerScore > computerScore;
+        const tied = playerScore === computerScore;
+
+        // 獎盃
+        ctx.font = '76px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('🏆', CW / 2, CH / 2 - 118);
+        ctx.textBaseline = 'alphabetic';
+
+        // 遊戲結束標題
+        ctx.font = 'bold 30px Arial'; ctx.fillStyle = '#aab';
+        ctx.fillText('⏱ 遊戲結束', CW / 2, CH / 2 - 52);
+
+        // 勝方公告
+        const winText  = tied ? '平局！' : pWin ? '🎉 玩家獲勝！' : '💻 電腦獲勝！';
+        const winColor = tied ? '#aaa'  : pWin ? '#44ff88' : '#ff5566';
+        ctx.font = 'bold 50px Arial'; ctx.fillStyle = winColor;
+        ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 14;
+        ctx.fillText(winText, CW / 2, CH / 2 + 14);
+        ctx.shadowBlur = 0;
+
+        // 最終比分
+        ctx.font = 'bold 34px Arial'; ctx.fillStyle = 'white';
+        ctx.fillText(`${playerScore}  :  ${computerScore}`, CW / 2, CH / 2 + 70);
+        ctx.font = '15px Arial'; ctx.fillStyle = '#778';
+        ctx.fillText('玩家               電腦', CW / 2, CH / 2 + 94);
+
+        // 返回提示（閃爍）
+        const blink = Math.floor(performance.now() / 500) % 2 === 0;
+        if (blink) {
+            ctx.font = 'bold 20px Arial'; ctx.fillStyle = '#44ff88';
+            ctx.fillText('點擊畫面 或 按任意鍵 返回主選單', CW / 2, CH / 2 + 144);
+        }
+
+        // 署名
+        ctx.font = '12px Arial'; ctx.textAlign = 'right';
+        ctx.fillStyle = 'rgba(150, 180, 220, 0.65)';
+        ctx.fillText('Deployed by Kyle Cheng', CW - 14, CH - 12);
     }
 
     // =====================================================
@@ -1083,24 +1206,40 @@
         drawHUD();
 
         // 各狀態的覆蓋層
-        if (phase === 'goal')   drawGoalScreen();
-        if (phase === 'paused') drawPauseScreen();
-        if (phase === 'start')  drawStartScreen();
+        if (phase === 'goal')     drawGoalScreen();
+        if (phase === 'paused')   drawPauseScreen();
+        if (phase === 'start')    drawStartScreen();
+        if (phase === 'gameover') drawGameOverScreen();
+
+        // 回主選單按鈕：疊在所有層之上（進行中 / 暫停 / 進球 均可見）
+        if (phase !== 'start' && phase !== 'gameover') drawMenuBtn();
     }
 
     // =====================================================
     //   主更新函式
     // =====================================================
     function update() {
-        // 暫停、開始選單、進球動畫 → 跳過遊戲邏輯
-        if (phase === 'start' || phase === 'paused') return;
+        // 暫停、開始選單、遊戲結束 → 跳過遊戲邏輯
+        if (phase === 'start' || phase === 'paused' || phase === 'gameover') return;
 
         if (phase === 'goal') {
             goalTimer--;
             if (goalTimer <= 0) {
-                phase = 'playing';
-                initPositions();
+                // 進球動畫結束後才判斷時間是否已到
+                if (gameFrames >= GAME_SECONDS * 60) {
+                    phase = 'gameover';
+                } else {
+                    phase = 'playing';
+                    initPositions();
+                }
             }
+            return;
+        }
+
+        // 倒數計時
+        gameFrames++;
+        if (gameFrames >= GAME_SECONDS * 60) {
+            phase = 'gameover';
             return;
         }
 
@@ -1155,11 +1294,28 @@
 
     canvas.addEventListener('touchstart', e => {
         e.preventDefault();
-        if (phase === 'start')  { phase = 'playing'; return; }
-        if (phase === 'paused') { phase = 'playing'; return; }
+
+        // 遊戲結束：點任何地方返回主選單
+        if (phase === 'gameover') {
+            phase = 'start'; playerScore = 0; computerScore = 0;
+            gameFrames = 0; initPositions(); return;
+        }
+
+        // 開始畫面：點任何地方開始遊戲
+        if (phase === 'start') { phase = 'playing'; gameFrames = 0; return; }
 
         Array.from(e.changedTouches).forEach(t => {
             const p = getTouchPos(t);
+
+            // 回主選單按鈕（左上角，任何狀態優先）
+            const mbdx = p.x - 28, mbdy = p.y - 38;
+            if (mbdx * mbdx + mbdy * mbdy < 484) { // r=22, r²=484
+                phase = 'start'; playerScore = 0; computerScore = 0;
+                gameFrames = 0; initPositions(); return;
+            }
+
+            // 暫停中：點非選單區繼續遊戲
+            if (phase === 'paused') { phase = 'playing'; return; }
 
             // 射門按鈕（左下）
             const sdx = p.x - shootBtn.x, sdy = p.y - shootBtn.y;
