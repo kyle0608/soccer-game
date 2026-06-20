@@ -338,6 +338,7 @@
     }
 
     function doPlayerShoot() {
+        playShootSound();
         player.hasBall = false;
         ball.free = true;
         let sx = player.facingX, sy = player.facingY;
@@ -401,6 +402,7 @@
     }
 
     function doComputerShoot() {
+        playShootSound();
         computer.hasBall = false;
         ball.free = true;
         const goalCX = FIELD.left - GOAL_W / 2;
@@ -516,7 +518,80 @@
     }
 
     function triggerGoal(msg) {
+        playGoalSound();
         phase = 'goal'; goalMsg = msg; goalTimer = 130;
+    }
+
+    // =====================================================
+    //   音效系統（Web Audio API，無需外部音效檔）
+    // =====================================================
+    let audioCtx = null;
+
+    // 取得（或建立）AudioContext；瀏覽器要求需有用戶互動後才能播音
+    function getAudioCtx() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        return audioCtx;
+    }
+
+    // 射門音效：短促踢球「碰！」聲（低頻衝擊 + 噪音摩擦）
+    function playShootSound() {
+        try {
+            const ctx = getAudioCtx();
+            const now = ctx.currentTime;
+
+            // 低頻衝擊（模擬腳踢球的悶響）
+            const osc  = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(160, now);
+            osc.frequency.exponentialRampToValueAtTime(55, now + 0.10);
+            gain.gain.setValueAtTime(0.7, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
+            osc.start(now);
+            osc.stop(now + 0.13);
+
+            // 短暫白噪音（模擬球皮摩擦聲）
+            const buf  = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.06), ctx.sampleRate);
+            const data = buf.getChannelData(0);
+            for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+            const noise     = ctx.createBufferSource();
+            const noiseGain = ctx.createGain();
+            noise.buffer = buf;
+            noise.connect(noiseGain);
+            noiseGain.connect(ctx.destination);
+            noiseGain.gain.setValueAtTime(0.18, now);
+            noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+            noise.start(now);
+        } catch (e) {}
+    }
+
+    // 得分音效：上升歡慶四音（C → E → G → 高C）
+    function playGoalSound() {
+        try {
+            const ctx   = getAudioCtx();
+            const now   = ctx.currentTime;
+            const notes = [523, 659, 784, 1047]; // C5 E5 G5 C6
+
+            notes.forEach((freq, i) => {
+                const osc  = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.type          = 'triangle'; // triangle 音色較清亮
+                osc.frequency.value = freq;
+                const t = now + i * 0.20;
+                gain.gain.setValueAtTime(0, t);
+                gain.gain.linearRampToValueAtTime(0.45, t + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+                osc.start(t);
+                osc.stop(t + 0.38);
+            });
+        } catch (e) {}
     }
 
     // =====================================================
