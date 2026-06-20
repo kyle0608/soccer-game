@@ -2028,10 +2028,16 @@
     // =====================================================
     //   主迴圈 + 啟動
     // =====================================================
-    function gameLoop() {
+    let _lastFrameTime = 0;
+    const _FRAME_MS = 1000 / 60;
+
+    function gameLoop(timestamp) {
+        requestAnimationFrame(gameLoop);
+        const elapsed = timestamp - _lastFrameTime;
+        if (elapsed < _FRAME_MS) return;
+        _lastFrameTime = timestamp - (elapsed % _FRAME_MS);
         update();
         draw();
-        requestAnimationFrame(gameLoop);
     }
 
     // 點擊 canvas 時把焦點拉回 document，確保鍵盤事件正常觸發
