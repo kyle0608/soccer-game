@@ -204,8 +204,11 @@
     const BALL_R    = 10;
     const P_SPEED   = 3.2;   // 玩家正常速度
     const P_SPRINT  = 5.8;   // 玩家衝刺速度
-    const SHOOT_SPD = 9.5;   // 射門速度
-    const FRICTION  = 0.963; // 球的摩擦係數
+    const SHOOT_SPD        = 14;    // 射門初速（足以從中線到球門）
+    const FRICTION         = 0.963; // 球的摩擦係數（最大射程 ≈ 378px）
+    const TACKLE_DASH_SPD  = 15;    // 玩家搶斷衝刺速度
+    const TACKLE_DASH_DIST = 140;   // 觸發搶斷衝刺的距離（px）
+    const TACKLE_DASH_FRAMES = 18;  // 衝刺持續幀數
     const DBL_TAP_MS    = 300; // 雙擊判定窗口（ms）
     const SPRINT_FRAMES = 75;  // 衝刺持續幀數
     const TACKLE_FRAMES = 60;  // 電腦搶球所需持續接觸幀數（60幀 ≈ 1秒）
@@ -291,6 +294,9 @@
     // 電腦搶球計時器：電腦持續接觸玩家累積幀數，達到 TACKLE_FRAMES 才成功搶球
     let tackleTimer = 0;
 
+    // 12碼 PK 賽狀態（null = 未進行）
+    let pk = null;
+
     // 方向鍵狀態（updatePlayer 讀取）
     const dpadState = { up: false, down: false, left: false, right: false };
 
@@ -342,6 +348,7 @@
                 computerScore = 0;
                 gameFrames    = 0;
                 currentHalf   = 1;
+                pk            = null;
                 initPositions();
             }
             keysDown[e.code] = true;
@@ -351,7 +358,7 @@
         // ── 遊戲結束畫面：任意鍵返回主選單 ──────────────
         if (phase === 'gameover') {
             phase = 'start'; playerScore = 0; computerScore = 0;
-            gameFrames = 0; currentHalf = 1; initPositions();
+            gameFrames = 0; currentHalf = 1; pk = null; initPositions();
             return;
         }
 
@@ -359,6 +366,18 @@
         if (phase === 'halftime') {
             currentHalf = 2; phase = 'playing';
             playWhistleSound(); initPositions();
+            keysDown[e.code] = true;
+            return;
+        }
+
+        // ── PK 大戰 ──────────────────────────────────────
+        if (phase === 'pk') {
+            if (pk.subPhase === 'aim' && pk.turn === 'player' && e.code === 'Space') {
+                _pkFire();
+            } else if (pk.subPhase === 'done') {
+                phase = 'start'; playerScore = 0; computerScore = 0;
+                gameFrames = 0; currentHalf = 1; pk = null; initPositions();
+            }
             keysDown[e.code] = true;
             return;
         }
@@ -397,9 +416,10 @@
                 keyLastPressTime[e.code] = now;
             }
 
-            // ── Space 鍵 → 射門 ─────────────────────────
-            if (e.code === 'Space' && player.hasBall && phase === 'playing') {
-                doPlayerShoot();
+            // ── Space 鍵 → 射門 / 搶斷衝刺 ────────────
+            if (e.code === 'Space' && phase === 'playing') {
+                if (player.hasBall) doPlayerShoot();
+                else doPlayerTackle();
             }
         }
 
@@ -421,6 +441,7 @@
             x: FIELD.left + FIELD.width * 0.22, y: FIELD.centerY,
             vx: 0, vy: 0,
             hasBall: false, sprintFrames: 0,
+            dashFrames: 0, dashVX: 0, dashVY: 0, // 搶斷衝刺狀態
             facingX: 1, facingY: 0,
             color: '#3399ff',
             walkFrame: 0,
@@ -457,6 +478,24 @@
     //   玩家更新
     // =====================================================
     function updatePlayer() {
+        // ── 搶斷衝刺覆蓋一般移動 ─────────────────────
+        if (player.dashFrames > 0) {
+            player.x += player.dashVX;
+            player.y += player.dashVY;
+            player.vx = player.dashVX;
+            player.vy = player.dashVY;
+            player.dashFrames--;
+            clampToField(player);
+            // 若在衝刺途中碰到持球電腦 → 立即搶球
+            if (computer.hasBall && stealCooldown === 0) {
+                if (dist2(player.x, player.y, computer.x, computer.y) < (PLAYER_R * 2 + 4) ** 2) {
+                    computer.hasBall = false; player.hasBall = true;
+                    ball.free = false; stealCooldown = 30; player.dashFrames = 0;
+                }
+            }
+            return;
+        }
+
         let dx = 0, dy = 0;
 
         // ── 鍵盤 / D-pad 輸入 ────────────────────────
@@ -502,14 +541,39 @@
         playShootSound();
         player.hasBall = false;
         ball.free = true;
-        let sx = player.facingX, sy = player.facingY;
-        if (sx === 0 && sy === 0) sx = 1;
-        const mag = Math.sqrt(sx * sx + sy * sy);
-        ball.x  = player.x + (sx / mag) * (PLAYER_R + BALL_R + 3);
-        ball.y  = player.y + (sy / mag) * (PLAYER_R + BALL_R + 3);
-        ball.vx = (sx / mag) * SHOOT_SPD;
-        ball.vy = (sy / mag) * SHOOT_SPD;
+
+        // 永遠朝電腦球門方向射擊，距離愈遠偏差愈大
+        const goalCX  = FIELD.right + GOAL_W / 2;
+        const goalCY  = GOAL_Y + GOAL_H / 2;
+        const dx      = goalCX - player.x;
+        const dy      = goalCY - player.y;
+        const dist    = Math.sqrt(dx * dx + dy * dy) || 1;
+        const baseAng = Math.atan2(dy, dx);
+
+        // 偏差：距離 340px（過中線）以下無偏，最遠 680px 約 ±28°
+        const fieldW    = FIELD.right - FIELD.left;
+        const spreadMax = 0.49; // 最大偏差角 (rad)，約 ±28°
+        const spread    = (Math.min(dist, fieldW) / fieldW) * spreadMax * (Math.random() * 2 - 1);
+        const ang       = baseAng + spread;
+
+        ball.x  = player.x + Math.cos(ang) * (PLAYER_R + BALL_R + 3);
+        ball.y  = player.y + Math.sin(ang) * (PLAYER_R + BALL_R + 3);
+        ball.vx = Math.cos(ang) * SHOOT_SPD;
+        ball.vy = Math.sin(ang) * SHOOT_SPD;
         stealCooldown = 20;
+    }
+
+    // 玩家搶斷衝刺（不帶球時按射門鍵，且靠近電腦時觸發）
+    function doPlayerTackle() {
+        const dx = computer.x - player.x;
+        const dy = computer.y - player.y;
+        const d  = Math.sqrt(dx * dx + dy * dy);
+        if (d > TACKLE_DASH_DIST || d < 1) return; // 超出範圍無效
+        player.dashVX     = (dx / d) * TACKLE_DASH_SPD;
+        player.dashVY     = (dy / d) * TACKLE_DASH_SPD;
+        player.dashFrames = TACKLE_DASH_FRAMES;
+        player.facingX    = dx / d;
+        player.facingY    = dy / d;
     }
 
     // =====================================================
@@ -755,22 +819,36 @@
         } catch (e) {}
     }
 
-    // 哨音（開賽 / 暫停 / 中場 / 結束）
+    // 哨音（長哨：高亮連鳴 1.2 秒）
     function playWhistleSound() {
         try {
             const ac  = getAudioCtx();
             const now = ac.currentTime;
+            // 主音：高頻正弦音（3000 Hz）維持後漸降
             const osc  = ac.createOscillator();
             const gain = ac.createGain();
             osc.connect(gain); gain.connect(ac.destination);
             osc.type = 'sine';
-            osc.frequency.setValueAtTime(2600, now);
-            osc.frequency.linearRampToValueAtTime(2200, now + 0.18);
-            osc.frequency.linearRampToValueAtTime(2500, now + 0.32);
+            osc.frequency.setValueAtTime(3000, now);
+            osc.frequency.linearRampToValueAtTime(3200, now + 0.08);
+            osc.frequency.linearRampToValueAtTime(2900, now + 0.45);
+            osc.frequency.linearRampToValueAtTime(2800, now + 1.1);
             gain.gain.setValueAtTime(0, now);
-            gain.gain.linearRampToValueAtTime(0.45, now + 0.02);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
-            osc.start(now); osc.stop(now + 0.4);
+            gain.gain.linearRampToValueAtTime(0.5, now + 0.03);
+            gain.gain.setValueAtTime(0.5, now + 0.8);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+            osc.start(now); osc.stop(now + 1.25);
+            // 泛音（八度）增加亮度
+            const osc2  = ac.createOscillator();
+            const gain2 = ac.createGain();
+            osc2.connect(gain2); gain2.connect(ac.destination);
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(6000, now);
+            osc2.frequency.linearRampToValueAtTime(5800, now + 0.5);
+            gain2.gain.setValueAtTime(0, now);
+            gain2.gain.linearRampToValueAtTime(0.18, now + 0.03);
+            gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+            osc2.start(now); osc2.stop(now + 1.0);
         } catch (e) {}
     }
 
@@ -793,6 +871,157 @@
                 osc.start(t); osc.stop(t + 0.44);
             });
         } catch (e) {}
+    }
+
+    // =====================================================
+    //   12碼 PK 大戰
+    // =====================================================
+    const PK_ROUNDS   = 5;
+    const PK_GK_HALF  = 30;  // GK 上下碰觸半徑（px）
+    const PK_BALL_SPD = 15;
+
+    function initPK() {
+        const baseY = GOAL_Y + GOAL_H / 2;
+        pk = {
+            round: 1, playerGoals: 0, compGoals: 0,
+            turn: 'player',          // 'player' | 'computer'
+            subPhase: 'aim',         // 'aim' | 'fly' | 'result' | 'done'
+            timer: 0,
+            aimY: baseY, aimVY: 3.5,  // 瞄準指示上下振盪
+            bx: 0, by: 0, bvx: 0, bvy: 0,
+            gkY: baseY,               // 守門員 Y
+            compGkTarget: baseY,
+            shooterX: 0, shooterY: baseY,
+            goalX: 0, goalDir: 1,
+            resultText: '',
+            gkWalkT: 0,
+        };
+        _setupPKTurn();
+    }
+
+    function _setupPKTurn() {
+        const baseY = GOAL_Y + GOAL_H / 2;
+        if (pk.turn === 'player') {
+            pk.shooterX = FIELD.right - 240;
+            pk.goalX    = FIELD.right;
+            pk.goalDir  = 1;
+        } else {
+            pk.shooterX = FIELD.left + 240;
+            pk.goalX    = FIELD.left;
+            pk.goalDir  = -1;
+        }
+        pk.shooterY = baseY;
+        pk.gkY      = baseY;
+        pk.compGkTarget = baseY;
+        pk.aimY     = baseY;
+        pk.aimVY    = 3.8 * (Math.random() > 0.5 ? 1 : -1);
+        pk.subPhase = 'aim';
+        pk.timer    = 0;
+    }
+
+    function _pkFire() {
+        const dx   = pk.goalX - pk.shooterX;
+        const dy   = pk.aimY  - pk.shooterY;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        pk.bx  = pk.shooterX + pk.goalDir * (PLAYER_R + BALL_R + 3);
+        pk.by  = pk.shooterY;
+        pk.bvx = (dx / dist) * PK_BALL_SPD;
+        pk.bvy = (dy / dist) * PK_BALL_SPD;
+
+        if (pk.turn === 'player') {
+            // 電腦守門員判斷：65% 正確方向，35% 猜錯
+            const correct = Math.random() < 0.65;
+            if (correct) {
+                pk.compGkTarget = pk.aimY + (Math.random() - 0.5) * 24;
+            } else {
+                const wrongY = pk.aimY < GOAL_Y + GOAL_H / 2
+                    ? GOAL_Y + GOAL_H * 0.80
+                    : GOAL_Y + GOAL_H * 0.20;
+                pk.compGkTarget = wrongY + (Math.random() - 0.5) * 20;
+            }
+        }
+        pk.subPhase = 'fly';
+        playShootSound();
+    }
+
+    function updatePK() {
+        pk.gkWalkT++;
+
+        if (pk.subPhase === 'aim') {
+            // 瞄準指示器振盪
+            pk.aimY += pk.aimVY;
+            if (pk.aimY <= GOAL_Y + 10) { pk.aimY = GOAL_Y + 10; pk.aimVY = Math.abs(pk.aimVY); }
+            if (pk.aimY >= GOAL_Y + GOAL_H - 10) { pk.aimY = GOAL_Y + GOAL_H - 10; pk.aimVY = -Math.abs(pk.aimVY); }
+
+            if (pk.turn === 'computer') {
+                // 玩家控制守門員上下移動
+                if (keysDown['ArrowUp']   || dpadState.up)   pk.gkY -= 5;
+                if (keysDown['ArrowDown'] || dpadState.down) pk.gkY += 5;
+                pk.gkY = Math.max(GOAL_Y + PK_GK_HALF, Math.min(GOAL_Y + GOAL_H - PK_GK_HALF, pk.gkY));
+
+                // 電腦自動在 90 幀後射門
+                pk.timer++;
+                if (pk.timer >= 90) {
+                    const m = 12;
+                    pk.aimY = GOAL_Y + m + Math.random() * (GOAL_H - m * 2);
+                    _pkFire();
+                }
+            }
+            return;
+        }
+
+        if (pk.subPhase === 'fly') {
+            pk.bx += pk.bvx;
+            pk.by += pk.bvy;
+
+            if (pk.turn === 'player') {
+                // 電腦守門員追向目標
+                const dy = pk.compGkTarget - pk.gkY;
+                pk.gkY += Math.sign(dy) * Math.min(Math.abs(dy), 5.5);
+                pk.gkY = Math.max(GOAL_Y + PK_GK_HALF, Math.min(GOAL_Y + GOAL_H - PK_GK_HALF, pk.gkY));
+            } else {
+                // 玩家守門員
+                if (keysDown['ArrowUp']   || dpadState.up)   pk.gkY -= 5;
+                if (keysDown['ArrowDown'] || dpadState.down) pk.gkY += 5;
+                pk.gkY = Math.max(GOAL_Y + PK_GK_HALF, Math.min(GOAL_Y + GOAL_H - PK_GK_HALF, pk.gkY));
+            }
+
+            const reached = pk.goalDir === 1 ? pk.bx >= pk.goalX : pk.bx <= pk.goalX;
+            if (reached) {
+                const saved  = Math.abs(pk.by - pk.gkY) < PK_GK_HALF + BALL_R + 2;
+                const inGoal = pk.by >= GOAL_Y && pk.by <= GOAL_Y + GOAL_H;
+                if (!saved && inGoal) {
+                    pk.resultText = '⚽ 進球！';
+                    if (pk.turn === 'player') pk.playerGoals++;
+                    else pk.compGoals++;
+                } else if (saved) {
+                    pk.resultText = '⛔ 撲救！';
+                } else {
+                    pk.resultText = '偏出！';
+                }
+                pk.subPhase = 'result';
+                pk.timer    = 110;
+            }
+            return;
+        }
+
+        if (pk.subPhase === 'result') {
+            pk.timer--;
+            if (pk.timer <= 0) {
+                if (pk.turn === 'player') {
+                    pk.turn = 'computer';
+                    _setupPKTurn();
+                } else {
+                    pk.round++;
+                    if (pk.round > PK_ROUNDS) {
+                        pk.subPhase = 'done';
+                    } else {
+                        pk.turn = 'player';
+                        _setupPKTurn();
+                    }
+                }
+            }
+        }
     }
 
     // =====================================================
@@ -1204,6 +1433,141 @@
     }
 
     // =====================================================
+    //   繪圖：12碼 PK 大戰
+    // =====================================================
+    function drawPKScreen() {
+        ctx.clearRect(0, 0, CW, CH);
+        drawField(); drawGoals();
+
+        // 頂部 PK 抬頭
+        ctx.fillStyle = '#111133';
+        ctx.fillRect(0, 0, CW, FIELD.top - 2);
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 20px Arial'; ctx.fillStyle = '#ffe040';
+        ctx.fillText(`⚽ 12碼 PK 大戰  第 ${pk.round}/${PK_ROUNDS} 輪`, CW / 2, 32);
+
+        // PK 比分
+        ctx.font = 'bold 20px Arial';
+        ctx.textAlign = 'right';  ctx.fillStyle = '#4499ff'; ctx.fillText(pk.playerGoals, CW / 2 - 14, 58);
+        ctx.textAlign = 'center'; ctx.fillStyle = '#aaa';    ctx.fillText(':', CW / 2, 58);
+        ctx.textAlign = 'left';   ctx.fillStyle = '#ff4455'; ctx.fillText(pk.compGoals,   CW / 2 + 14, 58);
+        ctx.font = '10px Arial';
+        ctx.textAlign = 'right';  ctx.fillStyle = '#5599ff'; ctx.fillText('玩家', CW / 2 - 20, 72);
+        ctx.textAlign = 'left';   ctx.fillStyle = '#ff6677'; ctx.fillText('電腦', CW / 2 + 20, 72);
+
+        // 輪到誰踢
+        ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+        ctx.fillStyle = pk.turn === 'player' ? '#44ddff' : '#ffaa44';
+        ctx.fillText(pk.turn === 'player' ? '▶ 玩家踢球' : '▶ 電腦踢球', CW / 2, 82);
+
+        // --- 繪製射手 ---
+        const fakeShooter = {
+            x: pk.shooterX, y: pk.shooterY, vx: 0, vy: 0,
+            hasBall: pk.subPhase === 'aim',
+            facingX: pk.goalDir, facingY: 0, walkFrame: 0, sprintFrames: 0,
+        };
+        drawActor(fakeShooter, pk.turn === 'player' ? 'P1' : 'AI');
+
+        // --- 繪製球 ---
+        const ballX = pk.subPhase === 'fly' ? pk.bx : pk.shooterX + pk.goalDir * (PLAYER_R + BALL_R + 3);
+        const ballY = pk.subPhase === 'fly' ? pk.by : pk.shooterY;
+        if (pk.subPhase !== 'result') {
+            // 借用 drawBall() 核心邏輯
+            ctx.beginPath(); ctx.arc(ballX, ballY, BALL_R, 0, Math.PI * 2);
+            ctx.fillStyle = 'white'; ctx.fill();
+            ctx.strokeStyle = '#222'; ctx.lineWidth = 1; ctx.stroke();
+            ctx.beginPath(); ctx.arc(ballX, ballY, BALL_R * 0.42, 0, Math.PI * 2);
+            ctx.fillStyle = '#1a1a1a'; ctx.fill();
+            ctx.beginPath(); ctx.arc(ballX - BALL_R*0.3, ballY - BALL_R*0.32, BALL_R*0.28, 0, Math.PI*2);
+            ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.fill();
+        }
+
+        // --- 繪製守門員 ---
+        const gkIsP1 = pk.turn === 'computer'; // 電腦踢→玩家守
+        const gkX    = pk.goalDir === 1 ? FIELD.right - 2 : FIELD.left + 2;
+        const fakeGK = {
+            x: gkX, y: pk.gkY, vx: 0, vy: 1, // vy≠0 觸發走路動畫
+            hasBall: false,
+            facingX: -pk.goalDir, facingY: 0,
+            walkFrame: pk.gkWalkT,
+            sprintFrames: 0,
+        };
+        drawActor(fakeGK, gkIsP1 ? 'P1' : 'AI');
+
+        // GK 上下滑動動態光暈
+        ctx.beginPath(); ctx.arc(gkX, pk.gkY, PLAYER_R + 7, 0, Math.PI * 2);
+        ctx.strokeStyle = gkIsP1 ? 'rgba(80,160,255,0.5)' : 'rgba(255,80,80,0.5)';
+        ctx.lineWidth = 3; ctx.stroke();
+
+        // --- 瞄準指示（aim 階段）---
+        if (pk.subPhase === 'aim') {
+            const aimGX = pk.goalDir === 1 ? FIELD.right - 4 : FIELD.left + 4;
+            // 瞄準線
+            ctx.setLineDash([10, 5]);
+            ctx.strokeStyle = 'rgba(255,230,50,0.75)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(pk.shooterX, pk.shooterY);
+            ctx.lineTo(aimGX, pk.aimY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            // 瞄準點
+            ctx.beginPath(); ctx.arc(aimGX, pk.aimY, 7, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffe040'; ctx.fill();
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+
+            // 操作提示
+            ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
+            if (pk.turn === 'player') {
+                ctx.fillStyle = '#44ff99';
+                ctx.fillText('瞄準 → 按 Space / 射門鍵 確認', CW / 2, CH - 22);
+            } else {
+                ctx.fillStyle = '#ffcc44';
+                ctx.fillText('↑↓ 移動守門員  電腦準備射門中...', CW / 2, CH - 22);
+            }
+        }
+
+        // --- 結果文字 ---
+        if (pk.subPhase === 'result') {
+            ctx.textAlign = 'center';
+            const blink = Math.floor(performance.now() / 180) % 2 === 0;
+            if (blink) {
+                ctx.font = 'bold 60px Arial';
+                ctx.fillStyle = pk.resultText.startsWith('⚽') ? '#ffe040' : '#ff6060';
+                ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 12;
+                ctx.fillText(pk.resultText, CW / 2, CH / 2 + 20);
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        // --- 完成畫面 ---
+        if (pk.subPhase === 'done') {
+            ctx.fillStyle = 'rgba(0,0,20,0.82)'; ctx.fillRect(0, 0, CW, CH);
+            ctx.textAlign = 'center';
+
+            let doneText, doneColor;
+            if      (pk.playerGoals > pk.compGoals) { doneText = '🏆 PK 勝利！'; doneColor = '#ffe040'; }
+            else if (pk.compGoals > pk.playerGoals)  { doneText = '😞 PK 落敗';  doneColor = '#ff6060'; }
+            else                                      { doneText = '🤝 和　局';   doneColor = '#aaccff'; }
+
+            ctx.font = 'bold 42px Arial'; ctx.fillStyle = doneColor;
+            ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 18;
+            ctx.fillText(doneText, CW / 2, CH / 2 - 60);
+            ctx.shadowBlur = 0;
+
+            ctx.font = 'bold 52px Arial';
+            ctx.textAlign = 'right';  ctx.fillStyle = '#4499ff'; ctx.fillText(pk.playerGoals, CW / 2 - 22, CH / 2 + 10);
+            ctx.textAlign = 'center'; ctx.fillStyle = '#888';    ctx.fillText(':', CW / 2, CH / 2 + 10);
+            ctx.textAlign = 'left';   ctx.fillStyle = '#ff4455'; ctx.fillText(pk.compGoals,   CW / 2 + 22, CH / 2 + 10);
+
+            if (Math.floor(performance.now() / 500) % 2 === 0) {
+                ctx.font = '18px Arial'; ctx.fillStyle = '#aab'; ctx.textAlign = 'center';
+                ctx.fillText('按任意鍵返回主選單', CW / 2, CH / 2 + 72);
+            }
+        }
+    }
+
+    // =====================================================
     //   繪圖：開始選單
     // =====================================================
     function drawStartScreen() {
@@ -1505,11 +1869,21 @@
     // =====================================================
     function draw() {
         ctx.clearRect(0, 0, CW, CH);
+
+        // PK 大戰：獨立繪製
+        if (phase === 'pk') { drawPKScreen(); return; }
+
         drawField();
         drawGoals();
         drawBall();
         drawActor(computer, 'AI');  // 電腦先畫（玩家在上層）
         drawActor(player, 'P1');
+        // 搶斷衝刺閃光
+        if (player.dashFrames > 0) {
+            const alpha = (player.dashFrames / TACKLE_DASH_FRAMES) * 0.7;
+            ctx.beginPath(); ctx.arc(player.x, player.y, PLAYER_R + 9, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255,60,60,${alpha})`; ctx.lineWidth = 4; ctx.stroke();
+        }
         drawTackleIndicator();      // 搶球倒數進度圈（在球員上層）
         if (phase === 'playing' && !isLandscapeMobile()) drawMobileControls();
         if (isLandscapeMobile()) { drawShootCvs(); drawDpadCvs(); } // 橫屏側邊控制
@@ -1529,16 +1903,24 @@
     // =====================================================
     //   主更新函式
     // =====================================================
+    function _triggerEnd() {
+        playWhistleSound();
+        if (playerScore === computerScore) { phase = 'pk'; initPK(); }
+        else { phase = 'gameover'; }
+    }
+
     function update() {
         // 暫停、開始選單、遊戲結束、中場休息 → 跳過遊戲邏輯
         if (phase === 'start' || phase === 'paused' || phase === 'gameover' || phase === 'halftime') return;
 
+        // PK 大戰更新
+        if (phase === 'pk') { updatePK(); return; }
+
         if (phase === 'goal') {
             goalTimer--;
             if (goalTimer <= 0) {
-                // 進球動畫結束後才判斷時間是否已到
                 if (gameFrames >= GAME_SECONDS * 60) {
-                    phase = 'gameover'; playWhistleSound();
+                    _triggerEnd();
                 } else if (currentHalf === 1 && gameFrames >= HALF_SECONDS * 60) {
                     phase = 'halftime'; playWhistleSound(); playHalftimeMusic();
                 } else {
@@ -1555,9 +1937,9 @@
         if (currentHalf === 1 && gameFrames >= HALF_SECONDS * 60) {
             phase = 'halftime'; playWhistleSound(); playHalftimeMusic(); return;
         }
-        // 下半場結束 → 遊戲結束
+        // 下半場結束 → 遊戲結束 or PK
         if (gameFrames >= GAME_SECONDS * 60) {
-            phase = 'gameover'; playWhistleSound(); return;
+            _triggerEnd(); return;
         }
 
         // 正常遊戲更新
@@ -1624,6 +2006,16 @@
             playWhistleSound(); initPositions(); return;
         }
 
+        // PK 大戰
+        if (phase === 'pk') {
+            if (pk.subPhase === 'aim' && pk.turn === 'player') { _pkFire(); }
+            else if (pk.subPhase === 'done') {
+                phase = 'start'; playerScore = 0; computerScore = 0;
+                gameFrames = 0; currentHalf = 1; pk = null; initPositions();
+            }
+            return;
+        }
+
         // 開始畫面：點任何地方開始遊戲
         if (phase === 'start') { phase = 'playing'; gameFrames = 0; playWhistleSound(); return; }
 
@@ -1634,7 +2026,7 @@
             const mbdx = p.x - 28, mbdy = p.y - 38;
             if (mbdx * mbdx + mbdy * mbdy < 484) { // r=22, r²=484
                 phase = 'start'; playerScore = 0; computerScore = 0;
-                gameFrames = 0; currentHalf = 1; initPositions(); return;
+                gameFrames = 0; currentHalf = 1; pk = null; initPositions(); return;
             }
 
             // 暫停中：點非選單區繼續遊戲
@@ -1645,7 +2037,10 @@
                 const sdx = p.x - shootBtn.x, sdy = p.y - shootBtn.y;
                 if (sdx*sdx + sdy*sdy < shootBtn.radius * shootBtn.radius) {
                     shootBtn.pressed = true; shootBtn.touchId = t.identifier;
-                    if (player.hasBall && phase === 'playing') doPlayerShoot();
+                    if (phase === 'playing') {
+                        if (player.hasBall) doPlayerShoot();
+                        else doPlayerTackle();
+                    }
                     return;
                 }
                 // 圓形方向鍵（右下，直屏時才在主 canvas 偵測）
@@ -1691,12 +2086,20 @@
     // =====================================================
     shootCvs.addEventListener('touchstart', e => {
         e.preventDefault();
-        if (phase === 'gameover') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; currentHalf=1; initPositions(); return; }
+        if (phase === 'gameover') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; currentHalf=1; pk=null; initPositions(); return; }
         if (phase === 'halftime') { currentHalf=2; phase='playing'; playWhistleSound(); initPositions(); return; }
-        if (phase === 'start')    { phase='playing'; gameFrames=0; playWhistleSound(); return; }
-        if (phase === 'paused')   { phase='playing'; playWhistleSound(); return; }
+        if (phase === 'pk') {
+            if (pk.subPhase==='aim' && pk.turn==='player') _pkFire();
+            else if (pk.subPhase==='done') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; currentHalf=1; pk=null; initPositions(); }
+            return;
+        }
+        if (phase === 'start')  { phase='playing'; gameFrames=0; playWhistleSound(); return; }
+        if (phase === 'paused') { phase='playing'; playWhistleSound(); return; }
         shootBtn.pressed = true;
-        if (player.hasBall && phase === 'playing') doPlayerShoot();
+        if (phase === 'playing') {
+            if (player.hasBall) doPlayerShoot();
+            else doPlayerTackle();
+        }
     }, { passive: false });
     shootCvs.addEventListener('touchend',    () => { shootBtn.pressed = false; }, { passive: false });
     shootCvs.addEventListener('touchcancel', () => { shootBtn.pressed = false; }, { passive: false });
@@ -1704,10 +2107,14 @@
     let extDpadTouchId = null;
     dpadCvs.addEventListener('touchstart', e => {
         e.preventDefault();
-        if (phase === 'gameover') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; currentHalf=1; initPositions(); return; }
+        if (phase === 'gameover') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; currentHalf=1; pk=null; initPositions(); return; }
         if (phase === 'halftime') { currentHalf=2; phase='playing'; playWhistleSound(); initPositions(); return; }
-        if (phase === 'start')    { phase='playing'; gameFrames=0; playWhistleSound(); return; }
-        if (phase === 'paused')   { phase='playing'; playWhistleSound(); return; }
+        if (phase === 'pk') {
+            if (pk.subPhase==='done') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; currentHalf=1; pk=null; initPositions(); }
+            return;
+        }
+        if (phase === 'start')  { phase='playing'; gameFrames=0; playWhistleSound(); return; }
+        if (phase === 'paused') { phase='playing'; playWhistleSound(); return; }
         const t = e.changedTouches[0];
         if (extDpadTouchId === null) { extDpadTouchId = t.identifier; updateExtDpadDir(t.clientX, t.clientY); }
     }, { passive: false });
