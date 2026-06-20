@@ -880,6 +880,20 @@
     const PK_GK_HALF  = 30;  // GK 上下碰觸半徑（px）
     const PK_BALL_SPD = 15;
 
+    // 三個射門 / 守門預測區（以 Y 座標表示，因球門在左右兩側）
+    const PK_ZONE_Y = {
+        left:   GOAL_Y + GOAL_H * 0.18,
+        center: GOAL_Y + GOAL_H * 0.50,
+        right:  GOAL_Y + GOAL_H * 0.82,
+    };
+
+    // 預測按鈕版面（繪製於場地下方）
+    const PK_BTN_W = 150, PK_BTN_H = 38, PK_BTN_GAP = 10;
+    const PK_BTN_Y = FIELD.bottom + 6;
+    const PK_BTN_X = [(CW - (3 * PK_BTN_W + 2 * PK_BTN_GAP)) / 2,
+                      (CW - (3 * PK_BTN_W + 2 * PK_BTN_GAP)) / 2 + PK_BTN_W + PK_BTN_GAP,
+                      (CW - (3 * PK_BTN_W + 2 * PK_BTN_GAP)) / 2 + (PK_BTN_W + PK_BTN_GAP) * 2];
+
     function initPK() {
         const baseY = GOAL_Y + GOAL_H / 2;
         pk = {
@@ -895,6 +909,8 @@
             goalX: 0, goalDir: 1,
             resultText: '',
             gkWalkT: 0,
+            gkChoice: null,        // 玩家預測的區域（'left'|'center'|'right'|null）
+            compShotZone: null,    // 電腦實際射向的區域
         };
         _setupPKTurn();
     }
@@ -917,6 +933,24 @@
         pk.aimVY    = 3.8 * (Math.random() > 0.5 ? 1 : -1);
         pk.subPhase = 'aim';
         pk.timer    = 0;
+        pk.gkChoice = null;
+        pk.compShotZone = null;
+    }
+
+    // 玩家選擇守門預測方向 → GK 立刻跳至對應區
+    function _pkGkPrediction(zone) {
+        pk.gkChoice = zone;
+        pk.gkY = PK_ZONE_Y[zone];
+    }
+
+    // 偵測點選是否落在某個預測按鈕上 (px, py 為畫布座標)
+    function _pkBtnHit(px, py) {
+        if (py < PK_BTN_Y || py > PK_BTN_Y + PK_BTN_H) return null;
+        const zones = ['left', 'center', 'right'];
+        for (let i = 0; i < 3; i++) {
+            if (px >= PK_BTN_X[i] && px <= PK_BTN_X[i] + PK_BTN_W) return zones[i];
+        }
+        return null;
     }
 
     function _pkFire() {
@@ -929,7 +963,7 @@
         pk.bvy = (dy / dist) * PK_BALL_SPD;
 
         if (pk.turn === 'player') {
-            // 電腦守門員判斷：65% 正確方向，35% 猜錯
+            // 電腦守門員：65% 猜對方向，35% 猜錯
             const correct = Math.random() < 0.65;
             if (correct) {
                 pk.compGkTarget = pk.aimY + (Math.random() - 0.5) * 24;
@@ -939,6 +973,18 @@
                     : GOAL_Y + GOAL_H * 0.20;
                 pk.compGkTarget = wrongY + (Math.random() - 0.5) * 20;
             }
+        } else {
+            // 電腦踢球：在三個固定區隨機選一區射門
+            const zones = ['left', 'center', 'right'];
+            pk.compShotZone = zones[Math.floor(Math.random() * 3)];
+            pk.aimY = PK_ZONE_Y[pk.compShotZone] + (Math.random() - 0.5) * 18;
+
+            // 重新計算速度向量
+            const dx2   = pk.goalX - pk.shooterX;
+            const dy2   = pk.aimY  - pk.shooterY;
+            const dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
+            pk.bvx = (dx2 / dist2) * PK_BALL_SPD;
+            pk.bvy = (dy2 / dist2) * PK_BALL_SPD;
         }
         pk.subPhase = 'fly';
         playShootSound();
@@ -1502,28 +1548,57 @@
         // --- 瞄準指示（aim 階段）---
         if (pk.subPhase === 'aim') {
             const aimGX = pk.goalDir === 1 ? FIELD.right - 4 : FIELD.left + 4;
-            // 瞄準線
-            ctx.setLineDash([10, 5]);
-            ctx.strokeStyle = 'rgba(255,230,50,0.75)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(pk.shooterX, pk.shooterY);
-            ctx.lineTo(aimGX, pk.aimY);
-            ctx.stroke();
-            ctx.setLineDash([]);
-            // 瞄準點
-            ctx.beginPath(); ctx.arc(aimGX, pk.aimY, 7, 0, Math.PI * 2);
-            ctx.fillStyle = '#ffe040'; ctx.fill();
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
-
-            // 操作提示
-            ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
+            // 瞄準線（只在玩家踢球時顯示）
             if (pk.turn === 'player') {
+                ctx.setLineDash([10, 5]);
+                ctx.strokeStyle = 'rgba(255,230,50,0.75)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(pk.shooterX, pk.shooterY);
+                ctx.lineTo(aimGX, pk.aimY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.beginPath(); ctx.arc(aimGX, pk.aimY, 7, 0, Math.PI * 2);
+                ctx.fillStyle = '#ffe040'; ctx.fill();
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+
+                ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
                 ctx.fillStyle = '#44ff99';
                 ctx.fillText('瞄準 → 按 Space / 射門鍵 確認', CW / 2, CH - 22);
-            } else {
-                ctx.fillStyle = '#ffcc44';
-                ctx.fillText('↑↓ 移動守門員  電腦準備射門中...', CW / 2, CH - 22);
+            }
+        }
+
+        // --- 電腦踢球：三個預測按鈕（aim 和 fly 階段都顯示）---
+        if (pk.turn === 'computer' && (pk.subPhase === 'aim' || pk.subPhase === 'fly')) {
+            const btnLabels = ['左', '中', '右'];
+            const btnZones  = ['left', 'center', 'right'];
+            const btnColors = ['#2255cc', '#228844', '#cc3322'];
+
+            for (let i = 0; i < 3; i++) {
+                const bx       = PK_BTN_X[i];
+                const selected = pk.gkChoice === btnZones[i];
+                ctx.beginPath(); ctx.roundRect(bx, PK_BTN_Y, PK_BTN_W, PK_BTN_H, 8);
+                ctx.fillStyle   = selected ? btnColors[i] : 'rgba(30,30,60,0.88)';
+                ctx.fill();
+                ctx.strokeStyle = selected ? '#ffffff' : btnColors[i];
+                ctx.lineWidth   = selected ? 2.5 : 2; ctx.stroke();
+
+                ctx.font = `bold 22px Arial`; ctx.textAlign = 'center'; ctx.fillStyle = 'white';
+                ctx.fillText(btnLabels[i], bx + PK_BTN_W / 2, PK_BTN_Y + PK_BTN_H / 2 + 8);
+            }
+
+            if (pk.subPhase === 'aim') {
+                // 提示文字
+                ctx.font = '13px Arial'; ctx.fillStyle = '#aab'; ctx.textAlign = 'center';
+                ctx.fillText('猜測電腦射向方向，或用 ↑↓ 鍵微調守門員', CW / 2, PK_BTN_Y + PK_BTN_H + 16);
+
+                // 倒數進度條（顯示電腦剩餘準備時間）
+                const prog = Math.min(pk.timer / 90, 1);
+                const barW = 200, barH = 6, barX = (CW - barW) / 2, barY = PK_BTN_Y - 14;
+                ctx.fillStyle = 'rgba(255,255,255,0.15)';
+                ctx.fillRect(barX, barY, barW, barH);
+                ctx.fillStyle = prog > 0.8 ? '#ff4444' : '#ffaa22';
+                ctx.fillRect(barX, barY, barW * prog, barH);
             }
         }
 
@@ -2008,10 +2083,29 @@
 
         // PK 大戰
         if (phase === 'pk') {
-            if (pk.subPhase === 'aim' && pk.turn === 'player') { _pkFire(); }
-            else if (pk.subPhase === 'done') {
-                phase = 'start'; playerScore = 0; computerScore = 0;
-                gameFrames = 0; currentHalf = 1; pk = null; initPositions();
+            const t0 = e.changedTouches[0];
+            if (t0) {
+                const p = getTouchPos(t0);
+                if (pk.subPhase === 'aim' && pk.turn === 'player') {
+                    _pkFire();
+                } else if (pk.turn === 'computer' &&
+                           (pk.subPhase === 'aim' || pk.subPhase === 'fly')) {
+                    // 偵測三個預測按鈕
+                    const zone = _pkBtnHit(p.x, p.y);
+                    if (zone) {
+                        _pkGkPrediction(zone);
+                    } else if (!isLandscapeMobile()) {
+                        // 直屏：也允許圓形 D-pad 微調守門員
+                        const cdx = p.x - cdpad.cx, cdy = p.y - cdpad.cy;
+                        if (cdx*cdx + cdy*cdy < cdpad.R * cdpad.R && !cdpad.active) {
+                            cdpad.active = true; cdpad.touchId = t0.identifier;
+                            updateCdpadDir(p.x, p.y);
+                        }
+                    }
+                } else if (pk.subPhase === 'done') {
+                    phase = 'start'; playerScore = 0; computerScore = 0;
+                    gameFrames = 0; currentHalf = 1; pk = null; initPositions();
+                }
             }
             return;
         }
@@ -2110,7 +2204,12 @@
         if (phase === 'gameover') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; currentHalf=1; pk=null; initPositions(); return; }
         if (phase === 'halftime') { currentHalf=2; phase='playing'; playWhistleSound(); initPositions(); return; }
         if (phase === 'pk') {
-            if (pk.subPhase==='done') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; currentHalf=1; pk=null; initPositions(); }
+            if (pk.subPhase === 'done') { phase='start'; playerScore=0; computerScore=0; gameFrames=0; currentHalf=1; pk=null; initPositions(); return; }
+            // 電腦踢球時，橫屏 D-pad 可操控守門員
+            if (pk.turn === 'computer') {
+                const t = e.changedTouches[0];
+                if (t && extDpadTouchId === null) { extDpadTouchId = t.identifier; updateExtDpadDir(t.clientX, t.clientY); }
+            }
             return;
         }
         if (phase === 'start')  { phase='playing'; gameFrames=0; playWhistleSound(); return; }
