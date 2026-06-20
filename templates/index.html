@@ -2043,15 +2043,24 @@
     //   主迴圈 + 啟動
     // =====================================================
     let _lastFrameTime = 0;
-    const _FRAME_MS = 1000 / 60;
+    let _accumulator   = 0;
+    const _FIXED_STEP  = 1000 / 60;   // 16.667ms
 
-    function gameLoop(timestamp) {
+    function gameLoop(now) {
         requestAnimationFrame(gameLoop);
-        const elapsed = timestamp - _lastFrameTime;
-        if (elapsed < _FRAME_MS) return;
-        _lastFrameTime = timestamp - (elapsed % _FRAME_MS);
-        update();
-        draw();
+        if (_lastFrameTime === 0) { _lastFrameTime = now; return; }
+
+        // 累積真實經過時間，上限 50ms 防止切換分頁後一次跑太多幀
+        _accumulator += Math.min(now - _lastFrameTime, 50);
+        _lastFrameTime = now;
+
+        let updated = false;
+        while (_accumulator >= _FIXED_STEP) {
+            update();
+            _accumulator -= _FIXED_STEP;
+            updated = true;
+        }
+        if (updated) draw();
     }
 
     // 點擊 canvas 時把焦點拉回 document，確保鍵盤事件正常觸發
