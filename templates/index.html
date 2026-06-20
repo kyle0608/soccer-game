@@ -1794,16 +1794,16 @@
     //   繪圖：回主選單按鈕（覆蓋在所有層之上）
     // =====================================================
     function drawMenuBtn() {
-        const mbx = 28, mby = 38, mbr = 22;
-        ctx.beginPath(); ctx.arc(mbx, mby, mbr, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(38, 55, 110, 0.60)';
+        const bx = 6, by = 10, bw = 92, bh = 34, br = 10;
+        ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, br);
+        ctx.fillStyle = 'rgba(38, 55, 110, 0.68)';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(90, 128, 200, 0.60)';
+        ctx.strokeStyle = 'rgba(90, 128, 200, 0.75)';
         ctx.lineWidth = 1.5; ctx.stroke();
-        ctx.font = 'bold 18px Arial';
+        ctx.font = 'bold 14px Arial';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillStyle = 'rgba(165, 200, 240, 0.88)';
-        ctx.fillText('←', mbx, mby);
+        ctx.fillStyle = 'rgba(165, 200, 240, 0.95)';
+        ctx.fillText('← 回主選單', bx + bw / 2, by + bh / 2);
         ctx.textBaseline = 'alphabetic';
     }
 
@@ -2117,8 +2117,7 @@
             const p = getTouchPos(t);
 
             // 回主選單按鈕（左上角，任何狀態優先）
-            const mbdx = p.x - 28, mbdy = p.y - 38;
-            if (mbdx * mbdx + mbdy * mbdy < 484) { // r=22, r²=484
+            if (p.x >= 6 && p.x <= 98 && p.y >= 10 && p.y <= 44) {
                 phase = 'start'; playerScore = 0; computerScore = 0;
                 gameFrames = 0; currentHalf = 1; pk = null; initPositions(); return;
             }
