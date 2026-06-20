@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(New-Item *)",
+      "PowerShell(Get-ChildItem -Recurse \"C:\\\\Users\\\\kyle\\\\Python_Project\\\\soccer_game\" | Where-Object { !$_.PSIsContainer } | Select-Object FullName, Length)",
+      "PowerShell(\\(Get-Command python\\).Source; python --version)",
+      "PowerShell(Get-ChildItem -Recurse \"C:\\\\Users\\\\kyle\\\\Python_Project\\\\soccer_game\" | Where-Object { !$_.PSIsContainer -and $_.FullName -notmatch '__pycache__|\\\\.claude' } | Select-Object FullName)"
+    ]
+  }
+}

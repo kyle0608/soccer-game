@@ -1,0 +1,42 @@
+請幫我製作一個簡單的"網頁版足球遊戲",是由Python + 網頁的單機 Server 版架構。 請幫我規劃並提供完整的程式碼
+
+技術需求如下：
+1. 後端 (Backend)：使用 Python 的 Flask 框架來架設單機伺服器，負責提供網頁檔案（Static Files）。
+2. 前端 (Frontend)：使用 HTML5 Canvas + JavaScript 處理遊戲邏輯、畫面渲染與鍵盤控制。
+
+1. 遊戲畫面與架構：
+   - 畫面中央為綠色足球場，左右兩側各有一個「球門」。
+   - 雙方各有一個球員：玩家（藍色圓圈）與 電腦（紅色圓圈）。
+   - 球（黑色或黑白相間小圓圈）會隨機在球場中出現。
+
+2. 移動與加速機制：
+   - 玩家控制：使用方向鍵（上、下、左、右）移動。
+   - 玩家加速：快速「連按」同一個方向鍵時，玩家球員可以加速前進。
+   - 電腦 AI：電腦會自動朝向球的位置移動，且電腦也有機率或定時會加速前進。
+
+3. 搶球與帶球機制：
+   - 遊戲開始或進球後，球隨機重置在場中。
+   - 雙方皆可去搶球。先碰到球的一方（判定碰撞）即可「帶球」。
+   - 帶球時，球會固定在該球員的前端（或跟隨球員移動）。
+   - 球權轉換：如果沒帶球的那一方碰到了帶球的球員（或碰到了球），球權會立刻轉換，改由另一方帶球。
+
+4. 射門與得分機制：
+   - 當玩家帶球往電腦球門移動時，按下「Space 鍵（空白鍵）」可以將球射向球門。
+   - 電腦帶球接近玩家球門時，也會自動進行射門。
+   - 球進入球門後算得分，畫面上方要顯示即時比分（玩家 vs 電腦）。
+   - 進球後，球員回到初始位置，球重新隨機生成，繼續下一輪。
+
+請提供我：
+1. 專案的資料夾結構說明 (README.md),（例如 app.py、templates/index.html 等）。
+2. 完整的 Python Flask 程式碼 (`app.py`)。
+3. 完整的前端 HTML/JS 程式碼 (`index.html`)。
+4. 簡單的啟動教學 (README.md),（如何安裝 Flask、如何執行指令）。
+5. 程式碼請附上詳細的中文註解
+
+//===========================
+目前太強, 電腦速度太快
+now implement a new feature
+1. let this game has  easy , medium , hard  3 kinds of game level , computer speed according to game level adjust,  and  user can change speed during  play the game
+   design  selection buttons at the bottom of the game.
+2. when user type "space" key , can pause / resume  game
+3. when user type "esc" key,  game over, back to start menu

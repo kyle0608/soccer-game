@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚽ 足球遊戲</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0d0d1a;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            color: white;
+            user-select: none;
+        }
+        #gameCanvas {
+            border: 3px solid #334;
+            border-radius: 6px;
+            box-shadow: 0 0 30px rgba(68, 136, 255, 0.3);
+            display: block;
+        }
+
+        /* ===== 難度選擇面板 ===== */
+        #difficultyPanel {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 14px;
+        }
+        #diffLabel {
+            color: #778;
+            font-size: 14px;
+            margin-right: 4px;
+        }
+        .diff-btn {
+            padding: 7px 22px;
+            border: 2px solid #334;
+            border-radius: 20px;
+            background: #141428;
+            color: #778;
+            font-size: 15px;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.18s;
+            outline: none;
+            letter-spacing: 1px;
+        }
+        .diff-btn:hover { background: #1e1e3a; color: #bbb; }
+
+        /* 各難度啟用樣式 */
+        .diff-btn.easy.active   { border-color: #44dd88; color: #44dd88; background: #0a2e1a; }
+        .diff-btn.medium.active { border-color: #ffaa22; color: #ffaa22; background: #2a1800; }
+        .diff-btn.hard.active   { border-color: #ff4455; color: #ff4455; background: #2a0008; }
+
+        #controls {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #556;
+            letter-spacing: 0.5px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="820" height="620"></canvas>
+
+    <!-- 難度選擇按鈕（遊玩中也可切換） -->
+    <div id="difficultyPanel">
+        <span id="diffLabel">難度：</span>
+        <button class="diff-btn easy"   onclick="setDifficulty('easy')">簡單</button>
+        <button class="diff-btn medium active" onclick="setDifficulty('medium')">普通</button>
+        <button class="diff-btn hard"   onclick="setDifficulty('hard')">困難</button>
+    </div>
+    <div id="controls">⬆⬇⬅➡ 移動 &nbsp;|&nbsp; 雙擊加速 &nbsp;|&nbsp; Space 射門 &nbsp;|&nbsp; ESC 暫停/繼續 &nbsp;|&nbsp; Q 返回選單</div>
+
+    <script>
+    // =====================================================
+    //   ⚽ 足球遊戲 v2
+    //   操作：方向鍵移動、雙擊加速、Z 射門
+    //        Space 暫停/繼續、ESC 返回選單
+    // =====================================================
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx    = canvas.getContext('2d');
+    const CW = canvas.width;
+    const CH = canvas.height;
+
+    // ---------- 球場尺寸 ----------
+    const FIELD = {
+        left: 70, right: 750, top: 90, bottom: 570,
+    };
+    FIELD.width   = FIELD.right  - FIELD.left;
+    FIELD.height  = FIELD.bottom - FIELD.top;
+    FIELD.centerX = FIELD.left + FIELD.width  / 2;
+    FIELD.centerY = FIELD.top  + FIELD.height / 2;
+
+    // ---------- 球門 ----------
+    const GOAL_W = 18;
+    const GOAL_H = 130;
+    const GOAL_Y = FIELD.centerY - GOAL_H / 2;
+
+    // ---------- 玩家固定常數 ----------
+    const PLAYER_R  = 22;
+    const BALL_R    = 10;
+    const P_SPEED   = 3.2;   // 玩家正常速度
+    const P_SPRINT  = 5.8;   // 玩家衝刺速度
+    const SHOOT_SPD = 9.5;   // 射門速度
+    const FRICTION  = 0.963; // 球的摩擦係數
+    const DBL_TAP_MS    = 300; // 雙擊判定窗口（ms）
+    const SPRINT_FRAMES = 75;  // 衝刺持續幀數
+    const TACKLE_FRAMES = 60;  // 電腦搶球所需持續接觸幀數（60幀 ≈ 1秒）
+
+    // =====================================================
+    //   難度設定（電腦速度、衝刺冷卻）
+    //   各難度速度已調降 50%
+    // =====================================================
+    const DIFF_SETTINGS = {
+        easy: {
+            label:       '簡單',
+            cSpeed:      0.75,  // 電腦正常移速（原 1.5 × 50%）
+            cSprint:     1.3,   // 電腦衝刺移速（原 2.6 × 50%）
+            coolMin:     280,   // 衝刺冷卻最短幀數
+            coolMax:     480,   // 衝刺冷卻最長幀數
+            shootDist:   110,   // 電腦在距左門幾 px 內射門
+            color:       '#44dd88',
+        },
+        medium: {
+            label:       '普通',
+            cSpeed:      1.1,   // 原 2.2 × 50%
+            cSprint:     2.1,   // 原 4.2 × 50%
+            coolMin:     160,
+            coolMax:     300,
+            shootDist:   130,
+            color:       '#ffaa22',
+        },
+        hard: {
+            label:       '困難',
+            cSpeed:      1.7,   // 原 3.4 × 50%
+            cSprint:     3.1,   // 原 6.2 × 50%
+            coolMin:     60,
+            coolMax:     140,
+            shootDist:   160,
+            color:       '#ff4455',
+        },
+    };
+
+    // 目前難度（預設：普通）
+    let currentDiff = 'medium';
+
+    /**
+     * 切換難度：更新變數並同步按鈕樣式
+     */
+    function setDifficulty(level) {
+        currentDiff = level;
+        document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector(`.diff-btn.${level}`).classList.add('active');
+    }
+
+    // =====================================================
+    //   遊戲狀態
+    // =====================================================
+    let player   = {};
+    let computer = {};
+    let ball     = {};
+
+    let playerScore   = 0;
+    let computerScore = 0;
+
+    // 遊戲階段：'start' | 'playing' | 'paused' | 'goal'
+    let phase     = 'start';
+    let goalTimer = 0;
+    let goalMsg   = '';
+
+    // 射門後短暫冷卻，防止立刻被自己搶到
+    let stealCooldown = 0;
+
+    // 電腦搶球計時器：電腦持續接觸玩家累積幀數，達到 TACKLE_FRAMES 才成功搶球
+    let tackleTimer = 0;
+
+    // =====================================================
+    //   鍵盤
+    // =====================================================
+    const keysDown = {};
+    const keyLastPressTime = {
+        ArrowUp: 0, ArrowDown: 0, ArrowLeft: 0, ArrowRight: 0
+    };
+
+    window.addEventListener('keydown', e => {
+        // 攔截會讓頁面捲動或焦點離開的鍵（含 Escape，防止瀏覽器搶走焦點）
+        if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Escape'].includes(e.code)) {
+            e.preventDefault();
+        }
+
+        // ── ESC：暫停 / 繼續 ────────────────────────────
+        if (e.code === 'Escape') {
+            if (phase === 'playing') {
+                phase = 'paused';
+            } else if (phase === 'paused') {
+                phase = 'playing';
+            }
+            // ESC 按下後強制把焦點拉回頁面，防止瀏覽器搶走焦點導致後續 Q 失效
+            document.body.focus();
+            keysDown[e.code] = true;
+            return;
+        }
+
+        // ── Q：從暫停畫面回到主選單（重置比分）─────────
+        if (e.code === 'KeyQ') {
+            if (phase === 'paused') {
+                phase         = 'start';
+                playerScore   = 0;
+                computerScore = 0;
+                initPositions();
+            }
+            keysDown[e.code] = true;
+            return;
+        }
+
+        // ── Space：開始畫面時開始遊戲 ──────────────────
+        if (e.code === 'Space') {
+            if (phase === 'start') {
+                phase = 'playing';
+                keysDown[e.code] = true;
+                return;
+            }
+        }
+
+        // ── 開始畫面：任意（非功能）鍵開始 ────────────
+        if (phase === 'start') {
+            phase = 'playing';
+            keysDown[e.code] = true;
+            return;
+        }
+
+        // 以下只在 'playing' 相關狀態下有效
+        if (phase !== 'playing') {
+            keysDown[e.code] = true;
+            return;
+        }
+
+        if (!keysDown[e.code]) {
+            // ── 雙擊方向鍵 → 衝刺 ──────────────────────
+            if (e.code in keyLastPressTime) {
+                const now = performance.now();
+                if (now - keyLastPressTime[e.code] < DBL_TAP_MS) {
+                    player.sprintFrames = SPRINT_FRAMES;
+                }
+                keyLastPressTime[e.code] = now;
+            }
+
+            // ── Space 鍵 → 射門 ─────────────────────────
+            if (e.code === 'Space' && player.hasBall && phase === 'playing') {
+                doPlayerShoot();
+            }
+        }
+
+        keysDown[e.code] = true;
+    });
+
+    window.addEventListener('keyup', e => {
+        keysDown[e.code] = false;
+    });
+
+
+    // =====================================================
+    //   初始化
+    // =====================================================
+    function initPositions() {
+        const ds = DIFF_SETTINGS[currentDiff];
+
+        player = {
+            x: FIELD.left + FIELD.width * 0.22, y: FIELD.centerY,
+            vx: 0, vy: 0,
+            hasBall: false, sprintFrames: 0,
+            facingX: 1, facingY: 0,
+            color: '#3399ff',
+        };
+
+        computer = {
+            x: FIELD.left + FIELD.width * 0.78, y: FIELD.centerY,
+            vx: 0, vy: 0,
+            hasBall: false, sprintFrames: 0,
+            // 初始衝刺冷卻從難度設定取得
+            sprintCooldown: ds.coolMin + Math.floor(Math.random() * (ds.coolMax - ds.coolMin)),
+            facingX: -1, facingY: 0,
+            color: '#ff4455',
+        };
+
+        stealCooldown = 0;
+        tackleTimer   = 0;
+        spawnBall();
+    }
+
+    function spawnBall() {
+        player.hasBall   = false;
+        computer.hasBall = false;
+        ball = {
+            x: FIELD.left + FIELD.width  * (0.30 + Math.random() * 0.40),
+            y: FIELD.top  + FIELD.height * (0.20 + Math.random() * 0.60),
+            vx: 0, vy: 0,
+            free: true,
+        };
+    }
+
+    // =====================================================
+    //   玩家更新
+    // =====================================================
+    function updatePlayer() {
+        let dx = 0, dy = 0;
+        if (keysDown['ArrowLeft'])  dx -= 1;
+        if (keysDown['ArrowRight']) dx += 1;
+        if (keysDown['ArrowUp'])    dy -= 1;
+        if (keysDown['ArrowDown'])  dy += 1;
+
+        if (player.sprintFrames > 0) player.sprintFrames--;
+        const spd = (player.sprintFrames > 0) ? P_SPRINT : P_SPEED;
+
+        // 斜向正規化
+        if (dx !== 0 && dy !== 0) { dx *= 0.7071; dy *= 0.7071; }
+
+        player.vx = dx * spd;
+        player.vy = dy * spd;
+
+        if (dx !== 0 || dy !== 0) {
+            const mag = Math.sqrt(dx * dx + dy * dy);
+            player.facingX = dx / mag;
+            player.facingY = dy / mag;
+        }
+
+        player.x += player.vx;
+        player.y += player.vy;
+        clampToField(player);
+
+        if (player.hasBall) carryBall(player);
+    }
+
+    function doPlayerShoot() {
+        player.hasBall = false;
+        ball.free = true;
+        let sx = player.facingX, sy = player.facingY;
+        if (sx === 0 && sy === 0) sx = 1;
+        const mag = Math.sqrt(sx * sx + sy * sy);
+        ball.x  = player.x + (sx / mag) * (PLAYER_R + BALL_R + 3);
+        ball.y  = player.y + (sy / mag) * (PLAYER_R + BALL_R + 3);
+        ball.vx = (sx / mag) * SHOOT_SPD;
+        ball.vy = (sy / mag) * SHOOT_SPD;
+        stealCooldown = 20;
+    }
+
+    // =====================================================
+    //   電腦 AI（速度由目前難度決定）
+    // =====================================================
+    function updateComputer() {
+        const ds = DIFF_SETTINGS[currentDiff]; // 讀取目前難度設定
+
+        // 衝刺計時
+        if (computer.sprintFrames  > 0) computer.sprintFrames--;
+        if (computer.sprintCooldown > 0) computer.sprintCooldown--;
+        if (computer.sprintCooldown <= 0) {
+            computer.sprintFrames   = SPRINT_FRAMES;
+            computer.sprintCooldown = ds.coolMin + Math.floor(Math.random() * (ds.coolMax - ds.coolMin));
+        }
+
+        const spd = (computer.sprintFrames > 0) ? ds.cSprint : ds.cSpeed;
+
+        let targetX, targetY;
+
+        if (computer.hasBall) {
+            // 帶球往左側球門（玩家門）靠近
+            targetX = FIELD.left;
+            targetY = GOAL_Y + GOAL_H / 2;
+
+            // 靠近球門時自動射門
+            if (computer.x - FIELD.left < ds.shootDist) {
+                doComputerShoot();
+                return;
+            }
+        } else {
+            // 無球：追球
+            targetX = ball.x;
+            targetY = ball.y;
+        }
+
+        const dx   = targetX - computer.x;
+        const dy   = targetY - computer.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+        computer.vx = (dx / dist) * spd;
+        computer.vy = (dy / dist) * spd;
+        computer.facingX = dx / dist;
+        computer.facingY = dy / dist;
+
+        computer.x += computer.vx;
+        computer.y += computer.vy;
+        clampToField(computer);
+
+        if (computer.hasBall) carryBall(computer);
+    }
+
+    function doComputerShoot() {
+        computer.hasBall = false;
+        ball.free = true;
+        const goalCX = FIELD.left - GOAL_W / 2;
+        const goalCY = GOAL_Y + GOAL_H / 2;
+        const dx     = goalCX - ball.x;
+        const dy     = goalCY - ball.y;
+        const dist   = Math.sqrt(dx * dx + dy * dy) || 1;
+        ball.x  = computer.x + (dx / dist) * (PLAYER_R + BALL_R + 3);
+        ball.y  = computer.y + (dy / dist) * (PLAYER_R + BALL_R + 3);
+        ball.vx = (dx / dist) * SHOOT_SPD;
+        ball.vy = (dy / dist) * SHOOT_SPD;
+        stealCooldown = 20;
+    }
+
+    // =====================================================
+    //   帶球 / 搶球
+    // =====================================================
+    function carryBall(actor) {
+        ball.x = actor.x + actor.facingX * (PLAYER_R + BALL_R);
+        ball.y = actor.y + actor.facingY * (PLAYER_R + BALL_R);
+        ball.x = Math.max(FIELD.left + BALL_R, Math.min(FIELD.right - BALL_R, ball.x));
+        ball.y = Math.max(FIELD.top  + BALL_R, Math.min(FIELD.bottom - BALL_R, ball.y));
+        ball.vx = 0; ball.vy = 0;
+    }
+
+    function checkCollisions() {
+        if (stealCooldown > 0) { stealCooldown--; tackleTimer = 0; return; }
+
+        const pBall  = dist2(player.x, player.y, ball.x, ball.y);
+        const cBall  = dist2(computer.x, computer.y, ball.x, ball.y);
+        const pComp  = dist2(player.x, player.y, computer.x, computer.y);
+        const pickR2 = (PLAYER_R + BALL_R) * (PLAYER_R + BALL_R);
+        const tackR2 = (PLAYER_R * 2 - 4)  * (PLAYER_R * 2 - 4);
+
+        if (!player.hasBall && !computer.hasBall) {
+            // 無人帶球：誰先碰到球誰帶球
+            tackleTimer = 0;
+            if (pBall < cBall && pBall < pickR2) {
+                player.hasBall = true; ball.free = false;
+            } else if (cBall < pickR2) {
+                computer.hasBall = true; ball.free = false;
+            }
+
+        } else if (player.hasBall) {
+            // 玩家帶球：電腦需持續接觸 TACKLE_FRAMES 幀才能搶球
+            if (pComp < tackR2) {
+                tackleTimer++;
+                if (tackleTimer >= TACKLE_FRAMES) {
+                    // 持續接觸滿 1 秒，搶球成功
+                    player.hasBall = false; computer.hasBall = true;
+                    ball.free = false; stealCooldown = 30; tackleTimer = 0;
+                }
+                // 未滿 1 秒：僅累積計時，玩家仍持球
+            } else {
+                // 接觸中斷：重置計時器
+                tackleTimer = 0;
+            }
+
+        } else if (computer.hasBall) {
+            // 電腦帶球：玩家碰到電腦則立即搶球（玩家搶球仍是即時）
+            tackleTimer = 0;
+            if (pComp < tackR2) {
+                computer.hasBall = false; player.hasBall = true;
+                ball.free = false; stealCooldown = 30;
+            }
+        }
+    }
+
+    // =====================================================
+    //   球的物理
+    // =====================================================
+    function updateBall() {
+        if (!ball.free) return;
+
+        ball.x += ball.vx;
+        ball.y += ball.vy;
+        ball.vx *= FRICTION;
+        ball.vy *= FRICTION;
+        if (Math.abs(ball.vx) < 0.05) ball.vx = 0;
+        if (Math.abs(ball.vy) < 0.05) ball.vy = 0;
+
+        // 上下邊界反彈
+        if (ball.y - BALL_R < FIELD.top)    { ball.y = FIELD.top    + BALL_R; ball.vy =  Math.abs(ball.vy) * 0.65; }
+        if (ball.y + BALL_R > FIELD.bottom) { ball.y = FIELD.bottom - BALL_R; ball.vy = -Math.abs(ball.vy) * 0.65; }
+
+        // 左右邊界：非球門開口則反彈
+        const inGoalY = ball.y > GOAL_Y && ball.y < GOAL_Y + GOAL_H;
+        if (ball.x - BALL_R < FIELD.left  && !inGoalY) { ball.x = FIELD.left  + BALL_R; ball.vx =  Math.abs(ball.vx) * 0.65; }
+        if (ball.x + BALL_R > FIELD.right && !inGoalY) { ball.x = FIELD.right - BALL_R; ball.vx = -Math.abs(ball.vx) * 0.65; }
+    }
+
+    // =====================================================
+    //   進球判定
+    // =====================================================
+    function checkGoals() {
+        // 右側球門（電腦門）：玩家得分
+        if (ball.x - BALL_R > FIELD.right && ball.y > GOAL_Y && ball.y < GOAL_Y + GOAL_H) {
+            playerScore++; triggerGoal('⚽ 玩家得分！'); return;
+        }
+        if (player.hasBall && player.x + PLAYER_R > FIELD.right + GOAL_W * 0.5
+            && player.y > GOAL_Y && player.y < GOAL_Y + GOAL_H) {
+            playerScore++; triggerGoal('⚽ 玩家得分！'); return;
+        }
+
+        // 左側球門（玩家門）：電腦得分
+        if (ball.x + BALL_R < FIELD.left && ball.y > GOAL_Y && ball.y < GOAL_Y + GOAL_H) {
+            computerScore++; triggerGoal('💻 電腦得分！'); return;
+        }
+        if (computer.hasBall && computer.x - PLAYER_R < FIELD.left - GOAL_W * 0.5
+            && computer.y > GOAL_Y && computer.y < GOAL_Y + GOAL_H) {
+            computerScore++; triggerGoal('💻 電腦得分！'); return;
+        }
+    }
+
+    function triggerGoal(msg) {
+        phase = 'goal'; goalMsg = msg; goalTimer = 130;
+    }
+
+    // =====================================================
+    //   工具
+    // =====================================================
+    function dist2(ax, ay, bx, by) {
+        return (ax - bx) * (ax - bx) + (ay - by) * (ay - by);
+    }
+    function clampToField(actor) {
+        actor.x = Math.max(FIELD.left  + PLAYER_R, Math.min(FIELD.right  - PLAYER_R, actor.x));
+        actor.y = Math.max(FIELD.top   + PLAYER_R, Math.min(FIELD.bottom - PLAYER_R, actor.y));
+    }
+    function lightenColor(hex, amount) {
+        const num = parseInt(hex.replace('#', ''), 16);
+        const r   = Math.min(255, (num >> 16) + amount);
+        const g   = Math.min(255, ((num >> 8) & 0xff) + amount);
+        const b   = Math.min(255, (num & 0xff) + amount);
+        return `rgb(${r},${g},${b})`;
+    }
+
+    // =====================================================
+    //   繪圖：球場
+    // =====================================================
+    function drawField() {
+        // 頂部 HUD 背景
+        ctx.fillStyle = '#111133';
+        ctx.fillRect(0, 0, CW, FIELD.top);
+
+        // 草地條紋
+        const sw = FIELD.width / 8;
+        for (let i = 0; i < 8; i++) {
+            ctx.fillStyle = (i % 2 === 0) ? '#2e8b2e' : '#339933';
+            ctx.fillRect(FIELD.left + i * sw, FIELD.top, sw, FIELD.height);
+        }
+
+        // 場地線
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.lineWidth   = 2;
+        ctx.strokeRect(FIELD.left, FIELD.top, FIELD.width, FIELD.height);
+        // 中線
+        ctx.beginPath(); ctx.moveTo(FIELD.centerX, FIELD.top); ctx.lineTo(FIELD.centerX, FIELD.bottom); ctx.stroke();
+        // 中圈
+        ctx.beginPath(); ctx.arc(FIELD.centerX, FIELD.centerY, 65, 0, Math.PI * 2); ctx.stroke();
+        // 中心點
+        ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(FIELD.centerX, FIELD.centerY, 4, 0, Math.PI * 2); ctx.fill();
+
+        // 禁區
+        ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1.5;
+        const bw = 85, bh = GOAL_H + 70, by = FIELD.centerY - bh / 2;
+        ctx.strokeRect(FIELD.left,         by, bw,  bh);
+        ctx.strokeRect(FIELD.right - bw,   by, bw,  bh);
+
+        // 角球弧
+        const corners = [
+            [FIELD.left, FIELD.top, 0, Math.PI/2],
+            [FIELD.right, FIELD.top, Math.PI/2, Math.PI],
+            [FIELD.right, FIELD.bottom, Math.PI, Math.PI*1.5],
+            [FIELD.left, FIELD.bottom, Math.PI*1.5, Math.PI*2],
+        ];
+        corners.forEach(([cx, cy, a1, a2]) => {
+            ctx.beginPath(); ctx.arc(cx, cy, 18, a1, a2); ctx.stroke();
+        });
+    }
+
+    // =====================================================
+    //   繪圖：球門
+    // =====================================================
+    function drawGoals() {
+        // 左側球門（玩家門）
+        ctx.fillStyle = 'rgba(100,100,120,0.7)';
+        ctx.fillRect(FIELD.left - GOAL_W, GOAL_Y, GOAL_W, GOAL_H);
+        ctx.strokeStyle = 'white'; ctx.lineWidth = 2;
+        ctx.strokeRect(FIELD.left - GOAL_W, GOAL_Y, GOAL_W, GOAL_H);
+        ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+        ctx.fillStyle = '#aac';
+        ctx.fillText('玩家門', FIELD.left - GOAL_W / 2, GOAL_Y - 6);
+
+        // 右側球門（電腦門）
+        ctx.fillStyle = 'rgba(100,100,120,0.7)';
+        ctx.fillRect(FIELD.right, GOAL_Y, GOAL_W, GOAL_H);
+        ctx.strokeStyle = 'white';
+        ctx.strokeRect(FIELD.right, GOAL_Y, GOAL_W, GOAL_H);
+        ctx.fillStyle = '#aac';
+        ctx.fillText('電腦門', FIELD.right + GOAL_W / 2, GOAL_Y - 6);
+    }
+
+    // =====================================================
+    //   繪圖：足球
+    // =====================================================
+    function drawBall() {
+        const x = ball.x, y = ball.y;
+        // 陰影
+        ctx.beginPath(); ctx.ellipse(x, y + BALL_R + 2, BALL_R * 0.8, BALL_R * 0.3, 0, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill();
+        // 白色球體
+        ctx.beginPath(); ctx.arc(x, y, BALL_R, 0, Math.PI * 2);
+        ctx.fillStyle = 'white'; ctx.fill();
+        ctx.strokeStyle = '#222'; ctx.lineWidth = 1; ctx.stroke();
+        // 黑色中心
+        ctx.beginPath(); ctx.arc(x, y, BALL_R * 0.42, 0, Math.PI * 2);
+        ctx.fillStyle = '#1a1a1a'; ctx.fill();
+        // 五個花紋點
+        for (let i = 0; i < 5; i++) {
+            const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
+            ctx.beginPath(); ctx.arc(x + Math.cos(a) * BALL_R * 0.7, y + Math.sin(a) * BALL_R * 0.7, BALL_R * 0.18, 0, Math.PI * 2);
+            ctx.fillStyle = '#1a1a1a'; ctx.fill();
+        }
+        // 高光
+        ctx.beginPath(); ctx.arc(x - BALL_R * 0.3, y - BALL_R * 0.32, BALL_R * 0.28, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.fill();
+    }
+
+    // =====================================================
+    //   繪圖：球員
+    // =====================================================
+    function drawActor(actor, label) {
+        const x = actor.x, y = actor.y;
+        const sp = actor.sprintFrames > 0;
+
+        // 衝刺光暈
+        if (sp) {
+            ctx.beginPath(); ctx.arc(x, y, PLAYER_R + 7, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255,210,0,0.55)'; ctx.lineWidth = 4; ctx.stroke();
+        }
+        // 帶球外圈
+        if (actor.hasBall) {
+            ctx.beginPath(); ctx.arc(x, y, PLAYER_R + 6, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255,230,50,0.85)'; ctx.lineWidth = 3; ctx.stroke();
+        }
+        // 陰影
+        ctx.beginPath(); ctx.ellipse(x, y + PLAYER_R, PLAYER_R * 0.85, PLAYER_R * 0.28, 0, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fill();
+        // 球員圓圈（漸層）
+        const grad = ctx.createRadialGradient(x - PLAYER_R * 0.3, y - PLAYER_R * 0.3, 2, x, y, PLAYER_R);
+        grad.addColorStop(0, lightenColor(actor.color, 40));
+        grad.addColorStop(1, actor.color);
+        ctx.beginPath(); ctx.arc(x, y, PLAYER_R, 0, Math.PI * 2);
+        ctx.fillStyle = grad; ctx.fill();
+        ctx.strokeStyle = actor.hasBall ? '#ffe040' : 'rgba(255,255,255,0.6)';
+        ctx.lineWidth   = actor.hasBall ? 3 : 1.5; ctx.stroke();
+        // 朝向眼睛
+        const ex = x + actor.facingX * PLAYER_R * 0.45;
+        const ey = y + actor.facingY * PLAYER_R * 0.45;
+        ctx.beginPath(); ctx.arc(ex, ey, 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = 'white'; ctx.fill();
+        ctx.beginPath(); ctx.arc(ex + actor.facingX, ey + actor.facingY, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#222'; ctx.fill();
+        // 標籤
+        ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+        ctx.fillStyle = 'white'; ctx.fillText(label, x, y + 4);
+    }
+
+    // =====================================================
+    //   繪圖：電腦搶球進度圈
+    //   當電腦正在搶球時，在玩家外側顯示紅色弧形進度條
+    // =====================================================
+    function drawTackleIndicator() {
+        if (tackleTimer <= 0) return;
+
+        const progress = tackleTimer / TACKLE_FRAMES; // 0.0 ~ 1.0
+        const radius   = PLAYER_R + 11;
+        const startA   = -Math.PI / 2;                // 從頂部開始順時針
+        const endA     = startA + progress * Math.PI * 2;
+
+        // 灰色底圈（背景軌道）
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+        ctx.lineWidth   = 4;
+        ctx.stroke();
+
+        // 紅色進度弧（隨時間填滿）
+        // 顏色從橘黃漸變到紅，快滿時閃爍
+        const flash = (progress > 0.8) && (Math.floor(performance.now() / 120) % 2 === 0);
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, radius, startA, endA);
+        ctx.strokeStyle = flash ? '#ffffff' : `hsl(${30 - progress * 30}, 100%, 55%)`;
+        ctx.lineWidth   = 4;
+        ctx.lineCap     = 'round';
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+
+        // 進度百分比文字（顯示在進度圈旁邊）
+        ctx.font      = 'bold 11px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = flash ? 'white' : '#ffaa44';
+        ctx.fillText('搶球 ' + Math.ceil(progress * 100) + '%', player.x, player.y - radius - 6);
+    }
+
+    // =====================================================
+    //   繪圖：HUD（比分 + 難度 + 提示）
+    // =====================================================
+    function drawHUD() {
+        const ds = DIFF_SETTINGS[currentDiff];
+
+        // 頂部背景
+        ctx.fillStyle = '#111133';
+        ctx.fillRect(0, 0, CW, FIELD.top - 2);
+
+        // 玩家標籤
+        ctx.font = 'bold 22px Arial'; ctx.textAlign = 'right';
+        ctx.fillStyle = '#4499ff'; ctx.fillText('玩家', CW / 2 - 55, 48);
+
+        // 比分
+        ctx.font = 'bold 30px Arial'; ctx.textAlign = 'center';
+        ctx.fillStyle = 'white'; ctx.fillText(playerScore + '  :  ' + computerScore, CW / 2, 52);
+
+        // 電腦標籤
+        ctx.font = 'bold 22px Arial'; ctx.textAlign = 'left';
+        ctx.fillStyle = '#ff4455'; ctx.fillText('電腦', CW / 2 + 55, 48);
+
+        // 難度標示（右上角）
+        ctx.font = 'bold 13px Arial'; ctx.textAlign = 'right';
+        ctx.fillStyle = ds.color;
+        ctx.fillText('難度：' + ds.label, CW - 10, 20);
+
+        // 提示文字
+        ctx.font = '11px Arial'; ctx.textAlign = 'center';
+        ctx.fillStyle = '#556';
+        ctx.fillText('ESC 暫停  Q 返回選單', CW / 2, 72);
+
+        // 衝刺中提示
+        if (player.sprintFrames > 0) {
+            ctx.font = 'bold 13px Arial'; ctx.textAlign = 'left';
+            ctx.fillStyle = '#ffe040'; ctx.fillText('⚡ 衝刺中！', FIELD.left, FIELD.top + 20);
+        }
+
+        // 帶球提示
+        if (player.hasBall) {
+            ctx.font = 'bold 13px Arial'; ctx.textAlign = 'right';
+            ctx.fillStyle = '#ffe040'; ctx.fillText('帶球中 → Space 射門', FIELD.right, FIELD.top + 20);
+        }
+    }
+
+    // =====================================================
+    //   繪圖：進球覆蓋層
+    // =====================================================
+    function drawGoalScreen() {
+        ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, CW, CH);
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 58px Arial';
+        ctx.fillStyle  = goalMsg.includes('玩家') ? '#44ff88' : '#ff5566';
+        ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 12;
+        ctx.fillText(goalMsg, CW / 2, CH / 2 - 10);
+        ctx.font = '22px Arial'; ctx.fillStyle = '#ddd';
+        ctx.fillText('繼續中...', CW / 2, CH / 2 + 45);
+        ctx.shadowBlur = 0;
+    }
+
+    // =====================================================
+    //   繪圖：暫停覆蓋層
+    // =====================================================
+    function drawPauseScreen() {
+        // 半透明遮罩
+        ctx.fillStyle = 'rgba(0,0,10,0.62)';
+        ctx.fillRect(0, 0, CW, CH);
+
+        // 暫停圓形背景框
+        ctx.beginPath();
+        ctx.roundRect(CW / 2 - 200, CH / 2 - 80, 400, 160, 16);
+        ctx.fillStyle = '#181830';
+        ctx.fill();
+        ctx.strokeStyle = '#334466'; ctx.lineWidth = 2; ctx.stroke();
+
+        // 暫停文字
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 48px Arial';
+        ctx.fillStyle = '#ffe040';
+        ctx.shadowColor = 'rgba(255,200,0,0.4)'; ctx.shadowBlur = 16;
+        ctx.fillText('⏸  暫停', CW / 2, CH / 2 - 14);
+        ctx.shadowBlur = 0;
+
+        // 操作提示
+        ctx.font = '18px Arial'; ctx.fillStyle = '#aab';
+        ctx.fillText('ESC 繼續遊戲　｜　Q 返回主選單', CW / 2, CH / 2 + 36);
+    }
+
+    // =====================================================
+    //   繪圖：開始選單
+    // =====================================================
+    function drawStartScreen() {
+        ctx.fillStyle = 'rgba(0,0,0,0.74)'; ctx.fillRect(0, 0, CW, CH);
+
+        // 標題
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 62px Arial';
+        ctx.fillStyle = '#ffe040';
+        ctx.shadowColor = 'rgba(255,200,0,0.5)'; ctx.shadowBlur = 24;
+        ctx.fillText('⚽ 足球遊戲', CW / 2, CH / 2 - 80);
+        ctx.shadowBlur = 0;
+
+        // 操作說明方框
+        ctx.beginPath();
+        ctx.roundRect(CW / 2 - 230, CH / 2 - 40, 460, 145, 12);
+        ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fill();
+        ctx.strokeStyle = '#334'; ctx.lineWidth = 1.5; ctx.stroke();
+
+        ctx.font = '18px Arial'; ctx.fillStyle = '#bbc';
+        const lines = [
+            '⬆⬇⬅➡  移動　　雙擊同方向鍵  衝刺加速',
+            'Space  射門（帶球時）',
+            'ESC  暫停 / 繼續　　Q  返回此選單',
+        ];
+        lines.forEach((t, i) => ctx.fillText(t, CW / 2, CH / 2 - 6 + i * 34));
+
+        // 難度提示
+        const ds = DIFF_SETTINGS[currentDiff];
+        ctx.font = '15px Arial'; ctx.fillStyle = ds.color;
+        ctx.fillText('目前難度：' + ds.label + '（可在畫面下方切換）', CW / 2, CH / 2 + 130);
+
+        // 開始提示（閃爍效果）
+        const blink = Math.floor(performance.now() / 500) % 2 === 0;
+        if (blink) {
+            ctx.font = 'bold 26px Arial'; ctx.fillStyle = '#44ff88';
+            ctx.fillText('按任意鍵開始遊戲', CW / 2, CH / 2 + 170);
+        }
+    }
+
+    // =====================================================
+    //   主繪圖函式
+    // =====================================================
+    function draw() {
+        ctx.clearRect(0, 0, CW, CH);
+        drawField();
+        drawGoals();
+        drawBall();
+        drawActor(computer, 'AI');  // 電腦先畫（玩家在上層）
+        drawActor(player, 'P1');
+        drawTackleIndicator();      // 搶球倒數進度圈（在球員上層）
+        drawHUD();
+
+        // 各狀態的覆蓋層
+        if (phase === 'goal')   drawGoalScreen();
+        if (phase === 'paused') drawPauseScreen();
+        if (phase === 'start')  drawStartScreen();
+    }
+
+    // =====================================================
+    //   主更新函式
+    // =====================================================
+    function update() {
+        // 暫停、開始選單、進球動畫 → 跳過遊戲邏輯
+        if (phase === 'start' || phase === 'paused') return;
+
+        if (phase === 'goal') {
+            goalTimer--;
+            if (goalTimer <= 0) {
+                phase = 'playing';
+                initPositions();
+            }
+            return;
+        }
+
+        // 正常遊戲更新
+        updatePlayer();
+        updateComputer();
+        checkCollisions();
+        updateBall();
+        checkGoals();
+    }
+
+    // =====================================================
+    //   主迴圈 + 啟動
+    // =====================================================
+    function gameLoop() {
+        update();
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    // 點擊 canvas 時把焦點拉回 document，確保鍵盤事件正常觸發
+    canvas.addEventListener('click', () => canvas.focus());
+    canvas.setAttribute('tabindex', '0'); // 讓 canvas 可被聚焦
+    canvas.focus();
+
+    initPositions();
+    gameLoop();
+    </script>
+</body>
+</html>
